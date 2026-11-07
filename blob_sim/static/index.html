@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blob Life — Neuroevolution & Ökonomie Simulator</title>
+  <meta name="description" content="2D Artificial Life & Ökonomie-Simulation mit konfigurierbaren neuronalen Netzen, Gruppenbildung, Handel und Lamarckscher Neuroevolution." />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <!-- Top Command Header -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">B</div>
+      <h1>Blob Life <span class="brand-sub">Neuroevolution &amp; Ökonomie</span></h1>
+    </div>
+
+    <div class="day-cycle-bar">
+      <div class="day-badge" id="dayBadge">Tag 1</div>
+      <div class="time-progress-wrap">
+        <div class="time-phase-label">
+          <span id="phaseLabel">☀️ Tag (Nahrungssuche &amp; Handel)</span>
+          <span id="tickLabel">0 / 360</span>
+        </div>
+        <div class="time-progress-track">
+          <div class="time-progress-fill" id="timeProgressFill"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="transport-controls">
+      <button class="btn btn-primary" id="btnPlayPause" title="Simulation pausieren / fortsetzen">⏸ Pause</button>
+      <button class="btn" id="btnStepTick" title="Einen einzelnen Simulations-Tick vorrücken">+1 Tick</button>
+      <button class="btn" id="btnStepDay" title="Einen kompletten Tag im Schnelllauf berechnen">+1 Tag</button>
+
+      <div class="speed-group" role="group" aria-label="Simulationsgeschwindigkeit">
+        <button class="speed-btn active" data-speed="1">1x</button>
+        <button class="speed-btn" data-speed="2">2x</button>
+        <button class="speed-btn" data-speed="5">5x</button>
+        <button class="speed-btn" data-speed="15">15x</button>
+        <button class="speed-btn" data-speed="45">45x</button>
+      </div>
+
+      <button class="btn" id="btnExportJson" title="Population &amp; beste Gehirne als JSON speichern">💾 Speichern</button>
+      <button class="btn" id="btnImportJson" title="Gespeicherte Population aus JSON laden">📂 Laden</button>
+      <input type="file" id="fileImportInput" accept=".json" style="display: none;" />
+      <button class="btn" id="btnResetWorld" title="Welt komplett neu starten">🔄 Reset</button>
+    </div>
+  </header>
+
+  <!-- Main 3-Column Layout -->
+  <main class="workspace">
+    <!-- Left Sidebar: Neural Network Architecture & Training Preferences -->
+    <aside class="sidebar">
+      <!-- 1. Neural Network Architecture Configurator -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">🧠 Neuronales Netz (Tiefe &amp; Breite)</span>
+          <span class="badge-dim" id="netTopologyBadge">16 → 24 → 24 → 5</span>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Netztiefe (Hidden Layers)</span>
+            <span class="control-val" id="valNetDepth">2</span>
+          </div>
+          <input type="range" id="sliderNetDepth" min="1" max="6" step="1" value="2" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Netzbreite (Neuronen / Layer)</span>
+            <span class="control-val" id="valNetWidth">24</span>
+          </div>
+          <input type="range" id="sliderNetWidth" min="4" max="96" step="4" value="24" />
+        </div>
+
+        <div class="input-grid-2">
+          <div class="control-row">
+            <div class="control-label"><span>Aktivierung</span></div>
+            <select class="select-input" id="selectActivation">
+              <option value="tanh" selected>Tanh (-1..1)</option>
+              <option value="relu">ReLU</option>
+              <option value="gelu">GELU</option>
+              <option value="silu">SiLU (Swish)</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <div class="control-label"><span>Custom Layer (opt.)</span></div>
+            <input type="text" class="text-input" id="inputCustomLayers" placeholder="z.B. 32, 16" />
+          </div>
+        </div>
+
+        <div class="input-grid-2">
+          <button class="btn btn-primary" id="btnApplyNetMigrate" title="Passt Tiefe &amp; Breite live an und übernimmt gelernte Teilgewichte">⚡ Live anpassen</button>
+          <button class="btn" id="btnApplyNetReset" title="Setzt alle Gehirne mit neuer Architektur komplett neu auf">🎲 Neu initialisieren</button>
+        </div>
+      </section>
+
+      <!-- 2. User Training Preferences (Reward Shaping & Evolution) -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">🎯 Trainings-Präferenz-Parameter</span>
+          <span class="badge-dim">Live RL + Genetik</span>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>🍏 Nahrungs-Priorität</span>
+            <span class="control-val" id="valPrefFood">1.60</span>
+          </div>
+          <input type="range" class="pref-slider" data-key="pref_food" id="sliderPrefFood" min="0.0" max="4.0" step="0.1" value="1.6" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>🪙 Handel &amp; Geld-Sinn</span>
+            <span class="control-val" id="valPrefMoney">1.00</span>
+          </div>
+          <input type="range" class="pref-slider" data-key="pref_money" id="sliderPrefMoney" min="0.0" max="4.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>🤝 Gruppen-Sozialität</span>
+            <span class="control-val" id="valPrefSocial">0.80</span>
+          </div>
+          <input type="range" class="pref-slider" data-key="pref_social" id="sliderPrefSocial" min="0.0" max="4.0" step="0.1" value="0.8" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>🏠 Heimkehr-Disziplin (Abend)</span>
+            <span class="control-val" id="valPrefHome">1.10</span>
+          </div>
+          <input type="range" class="pref-slider" data-key="pref_home" id="sliderPrefHome" min="0.0" max="4.0" step="0.1" value="1.1" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>🧭 Entdeckerdrang (Exploration)</span>
+            <span class="control-val" id="valPrefExplore">0.35</span>
+          </div>
+          <input type="range" class="pref-slider" data-key="pref_exploration" id="sliderPrefExplore" min="0.0" max="2.5" step="0.05" value="0.35" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>⚡ Online-Lernrate (Im Leben)</span>
+            <span class="control-val" id="valLearningRate">0.015</span>
+          </div>
+          <input type="range" class="pref-slider" data-key="learning_rate" id="sliderLearningRate" min="0.0" max="0.08" step="0.005" value="0.015" />
+        </div>
+
+        <div class="input-grid-2">
+          <div class="control-row">
+            <div class="control-label">
+              <span>🧬 Mutationsrate</span>
+              <span class="control-val" id="valMutRate">0.18</span>
+            </div>
+            <input type="range" class="pref-slider" data-key="mutation_rate" id="sliderMutRate" min="0.01" max="0.60" step="0.02" value="0.18" />
+          </div>
+          <div class="control-row">
+            <div class="control-label">
+              <span>💥 Mutationsstärke</span>
+              <span class="control-val" id="valMutStrength">0.14</span>
+            </div>
+            <input type="range" class="pref-slider" data-key="mutation_strength" id="sliderMutStrength" min="0.02" max="0.50" step="0.02" value="0.14" />
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. World & Economy Rules -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">🌍 Welt- &amp; Ökonomie-Regeln</span>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Täglicher Nahrungs-Spawn</span>
+            <span class="control-val" id="valFoodSpawn">95</span>
+          </div>
+          <input type="range" id="sliderFoodSpawn" min="20" max="250" step="5" value="95" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Überlebensbedarf / Tag (2x = Kind!)</span>
+            <span class="control-val" id="valSurvivalNeed">1.0 (2.0 = Kind)</span>
+          </div>
+          <input type="range" id="sliderSurvivalNeed" min="0.5" max="2.5" step="0.25" value="1.0" />
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Marktpreis pro 1.0 Essen (Gold)</span>
+            <span class="control-val" id="valFoodPrice">5.0 🪙</span>
+          </div>
+          <input type="range" id="sliderFoodPrice" min="1.0" max="15.0" step="0.5" value="5.0" />
+        </div>
+      </section>
+    </aside>
+
+    <!-- Center 2D World Stage -->
+    <section class="center-stage">
+      <div class="stage-toolbar">
+        <div class="tool-group">
+          <button class="btn btn-active god-tool-btn" data-tool="inspect">🔍 Inspizieren</button>
+          <button class="btn god-tool-btn" data-tool="spawn_food">🍏 +8 Nahrung säen</button>
+          <button class="btn god-tool-btn" data-tool="spawn_blob">🧬 Blob setzen</button>
+          <button class="btn god-tool-btn" data-tool="gift_gold">🪙 +15 Gold</button>
+          <button class="btn" id="btnToggleVision" title="Sichtradien &amp; Heimatlinien ein-/ausblenden">👁️ Sichtlinien</button>
+        </div>
+
+        <div class="kpi-strip">
+          <div class="kpi-item">Blobs: <strong id="kpiPopulation">45</strong></div>
+          <div class="kpi-item">Nahrung: <strong id="kpiFood">95</strong></div>
+          <div class="kpi-item">Gruppen: <strong id="kpiGroups">0</strong></div>
+          <div class="kpi-item">Handel: <strong id="kpiTrades">0</strong></div>
+          <div class="kpi-item">Geburten: <strong id="kpiBirths">0</strong></div>
+        </div>
+      </div>
+
+      <div class="canvas-wrapper">
+        <canvas id="worldCanvas" width="1200" height="800"></canvas>
+      </div>
+    </section>
+
+    <!-- Right Sidebar: Blob Brain Inspector, Stats Charts & Groups -->
+    <aside class="sidebar-right">
+      <!-- 1. Selected Blob & Live Neural Network Inspector -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title" id="inspectorTitle">🔬 Blob-Inspektor (#1)</span>
+          <span class="badge-dim" id="inspectorGroupBadge">Einzelgänger</span>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-box">
+            <span>Tages-Essen (1x / 2x)</span>
+            <strong id="inspFoodToday">0.00 / 2.00</strong>
+          </div>
+          <div class="stat-box">
+            <span>Geld &amp; Überschuss</span>
+            <strong id="inspMoney">6.0 🪙 (+0.0🍏)</strong>
+          </div>
+          <div class="stat-box">
+            <span>Energie &amp; Alter</span>
+            <strong id="inspEnergyAge">85% · 0 Tage</strong>
+          </div>
+          <div class="stat-box">
+            <span>Gen · Kinder · Handel</span>
+            <strong id="inspGenChildren">G1 · 0👶 · 0🤝</strong>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Körper-Gene (Speed / Sicht / Größe)</span>
+            <span class="control-val" id="inspGenesText">1.00x / 1.00x / 1.00x</span>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Live Neuronales Netz (Aktivierung &amp; Synapsen)</span>
+            <span class="control-val" id="inspParamCount">749 Params</span>
+          </div>
+          <canvas id="nnCanvas" width="335" height="215"></canvas>
+        </div>
+      </section>
+
+      <!-- 2. Real-time Evolution & Economy Chart -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">📈 Evolutions- &amp; Wirtschafts-Verlauf</span>
+          <select class="select-input" id="selectChartMode" style="width: 155px; padding: 2px 6px;">
+            <option value="pop">Population &amp; Gruppen</option>
+            <option value="econ">Ø Geld &amp; Handel</option>
+            <option value="genes">Gene (Speed/Sense/Size)</option>
+          </select>
+        </div>
+        <canvas id="chartCanvas" width="335" height="125"></canvas>
+      </section>
+
+      <!-- 3. Active Groups & Live Event Ticker -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">🏕️ Aktive Gruppen &amp; Dörfer</span>
+        </div>
+        <div class="group-list" id="groupListContainer">
+          <div class="event-item">Blobs knüpfen Kontakte bei Begegnung...</div>
+        </div>
+
+        <div class="section-header" style="margin-top: 4px;">
+          <span class="section-title">📜 Live-Ereignisse</span>
+        </div>
+        <div class="event-feed" id="eventFeedContainer"></div>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
