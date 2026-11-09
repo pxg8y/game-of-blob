@@ -164,9 +164,10 @@ class SimulationController:
         w_data = msg.get("world", {})
         wcfg = self.world.world_cfg
         preset_changed = False
-        if "scale_preset" in w_data:
-            new_preset = str(w_data["scale_preset"]).strip().lower()
-            if new_preset in WORLD_SCALE_PRESETS and new_preset != getattr(wcfg, "scale_preset", "classic"):
+        preset_key = "scale_preset" if "scale_preset" in w_data else ("preset" if "preset" in w_data else None)
+        if preset_key is not None:
+            new_preset = str(w_data[preset_key]).strip().lower()
+            if new_preset in WORLD_SCALE_PRESETS and new_preset != getattr(wcfg, "scale_preset", None):
                 wcfg.apply_scale_preset(new_preset)
                 preset_changed = True
         if "daily_food_spawn" in w_data and not preset_changed:
@@ -255,7 +256,8 @@ class SimulationController:
                 return {"ok": True, "paradigm": self.world.get_active_paradigm()}
 
             if cmd == "set_scale_preset":
-                preset = str(msg.get("scale_preset", "continent")).strip().lower()
+                preset_val = msg.get("scale_preset", msg.get("preset", "continent"))
+                preset = str(preset_val).strip().lower()
                 if preset in WORLD_SCALE_PRESETS:
                     self.world.world_cfg.apply_scale_preset(preset)
                     self.world.reset_world()

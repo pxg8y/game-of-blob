@@ -383,6 +383,69 @@ class TestMilestone3Streaming(unittest.TestCase):
             self.assertEqual(len(controller.client_viewports), 0)
             self.assertEqual(len(controller.client_food_versions), 0)
 
+    # --- Map Scale Preset Switching Tests ---
+
+    def test_switch_map_scale_presets(self) -> None:
+        """Verify seamless switching between classic, regional, and continent map scale presets."""
+        client = TestClient(app)
+
+        # 1. Start from default continent preset
+        with controller.lock:
+            self.assertEqual(controller.world.world_cfg.scale_preset, "continent")
+            self.assertEqual(controller.world.world_cfg.width, 40000.0)
+            self.assertEqual(controller.world.world_cfg.height, 30000.0)
+            self.assertEqual(controller.world.world_cfg.num_cradles, 12)
+
+        # 2. Switch to 'regional' using `preset` key (frontend format)
+        res = client.post("/api/command", json={"cmd": "set_scale_preset", "preset": "regional"})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("ok"))
+        self.assertEqual(data["world_cfg"]["scale_preset"], "regional")
+        with controller.lock:
+            self.assertEqual(controller.world.world_cfg.scale_preset, "regional")
+            self.assertEqual(controller.world.world_cfg.width, 16000.0)
+            self.assertEqual(controller.world.world_cfg.height, 12000.0)
+            self.assertEqual(controller.world.world_cfg.num_cradles, 5)
+
+        # 3. Switch to 'classic' using `scale_preset` key (backend format)
+        res = client.post("/api/command", json={"cmd": "set_scale_preset", "scale_preset": "classic"})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("ok"))
+        self.assertEqual(data["world_cfg"]["scale_preset"], "classic")
+        with controller.lock:
+            self.assertEqual(controller.world.world_cfg.scale_preset, "classic")
+            self.assertEqual(controller.world.world_cfg.width, 4800.0)
+            self.assertEqual(controller.world.world_cfg.height, 3600.0)
+            self.assertEqual(controller.world.world_cfg.num_cradles, 1)
+
+        # 4. Switch back to 'continent' via `update_world`
+        res = client.post("/api/command", json={"cmd": "update_world", "world": {"scale_preset": "continent"}})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("ok"))
+        self.assertEqual(data["world_cfg"]["scale_preset"], "continent")
+        with controller.lock:
+            self.assertEqual(controller.world.world_cfg.scale_preset, "continent")
+            self.assertEqual(controller.world.world_cfg.width, 40000.0)
+            self.assertEqual(controller.world.world_cfg.height, 30000.0)
+            self.assertEqual(controller.world.world_cfg.num_cradles, 12)
+
+        # 5. Verify over WebSocket connection as well
+        with client.websocket_connect("/ws") as ws:
+            ws.receive_text()
+            ws.receive_bytes()
+
+            # Send preset switch to regional
+            ws.send_text(json.dumps({"cmd": "set_scale_preset", "preset": "regional"}))
+            # State broadcast after command execution
+            t = ws.receive_text()
+            b = ws.receive_bytes()
+            state_msg = json.loads(t)
+            self.assertEqual(state_msg["data"]["world"]["scale_preset"], "regional")
+            self.assertEqual(state_msg["data"]["world"]["width"], 16000.0)
+
 
 if __name__ == "__main__":
     unittest.main()
