@@ -637,7 +637,11 @@
 
   if (selectScalePreset) {
     selectScalePreset.addEventListener("change", () => {
-      sendCommand({ cmd: "set_scale_preset", preset: selectScalePreset.value });
+      sendCommand({
+        cmd: "set_scale_preset",
+        scale_preset: selectScalePreset.value,
+        preset: selectScalePreset.value,
+      });
     });
   }
 
