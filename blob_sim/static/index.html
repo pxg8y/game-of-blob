@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blob Life — Neuroevolution & Ökonomie Simulator</title>
-  <meta name="description" content="2D Artificial Life & Ökonomie-Simulation mit konfigurierbaren neuronalen Netzen, Gruppenbildung, Handel und Lamarckscher Neuroevolution." />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <title>Blob Life — Neuroevolution &amp; Ökonomie Simulator</title>
+  <meta name="description" content="2D Artificial Life &amp; Ökonomie-Simulation mit konfigurierbaren neuronalen Netzen, mehrhäusigen Siedlungen, freiem Handel und Lamarckscher Neuroevolution." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2310b981'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='sans-serif' font-weight='800' font-size='18' fill='%23051e14'%3EB%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/styles.css?v=8" />
 </head>
 <body>
   <!-- Top Command Header -->
@@ -17,6 +18,7 @@
 
     <div class="day-cycle-bar">
       <div class="day-badge" id="dayBadge">Tag 1</div>
+      <div class="season-badge" id="seasonBadge" title="16-Tage Jahreszeiten-Zyklus (je 4 Tage)">🌸 Frühling</div>
       <div class="time-progress-wrap">
         <div class="time-phase-label">
           <span id="phaseLabel">☀️ Tag (Nahrungssuche &amp; Handel)</span>
@@ -29,9 +31,10 @@
     </div>
 
     <div class="transport-controls">
+      <a class="btn btn-cockpit-nav" href="/analyse" title="Telemetrie-, Zyklus-, Genetik- &amp; Weight-Analyse-Cockpit öffnen">📊 Analyse-Cockpit</a>
       <button class="btn btn-primary" id="btnPlayPause" title="Simulation pausieren / fortsetzen">⏸ Pause</button>
       <button class="btn" id="btnStepTick" title="Einen einzelnen Simulations-Tick vorrücken">+1 Tick</button>
-      <button class="btn" id="btnStepDay" title="Einen kompletten Tag im Schnelllauf berechnen">+1 Tag</button>
+      <button class="btn" id="btnStepDay" title="Bis zum nächsten Tagesanbruch berechnen">+1 Tag</button>
 
       <div class="speed-group" role="group" aria-label="Simulationsgeschwindigkeit">
         <button class="speed-btn active" data-speed="1">1x</button>
@@ -39,6 +42,8 @@
         <button class="speed-btn" data-speed="5">5x</button>
         <button class="speed-btn" data-speed="15">15x</button>
         <button class="speed-btn" data-speed="45">45x</button>
+        <button class="speed-btn" data-speed="150">150x</button>
+        <button class="speed-btn" data-speed="500">500x</button>
       </div>
 
       <button class="btn" id="btnExportJson" title="Population &amp; beste Gehirne als JSON speichern">💾 Speichern</button>
@@ -56,7 +61,7 @@
       <section class="panel-section">
         <div class="section-header">
           <span class="section-title">🧠 Neuronales Netz (Tiefe &amp; Breite)</span>
-          <span class="badge-dim" id="netTopologyBadge">16 → 24 → 24 → 5</span>
+          <span class="badge-dim" id="netTopologyBadge">26 → 24 → 24 → 6</span>
         </div>
 
         <div class="control-row">
@@ -122,7 +127,7 @@
 
         <div class="control-row">
           <div class="control-label">
-            <span>🤝 Gruppen-Sozialität</span>
+            <span>🤝 Siedlungs-Sozialität</span>
             <span class="control-val" id="valPrefSocial">0.80</span>
           </div>
           <input type="range" class="pref-slider" data-key="pref_social" id="sliderPrefSocial" min="0.0" max="4.0" step="0.1" value="0.8" />
@@ -170,34 +175,69 @@
         </div>
       </section>
 
-      <!-- 3. World & Economy Rules -->
+      <!-- 3. World, Settlement & Economy Rules -->
       <section class="panel-section">
         <div class="section-header">
-          <span class="section-title">🌍 Welt- &amp; Ökonomie-Regeln</span>
+          <span class="section-title">🗺️ Weltgröße, Map &amp; Paradigma</span>
+          <span class="badge-dim" id="paradigmBadge">12-Wiegen</span>
         </div>
 
         <div class="control-row">
           <div class="control-label">
-            <span>Täglicher Nahrungs-Spawn</span>
-            <span class="control-val" id="valFoodSpawn">95</span>
+            <span>Welt-Skalierung (Multi-Cradle Topographie)</span>
           </div>
-          <input type="range" id="sliderFoodSpawn" min="20" max="250" step="5" value="95" />
+          <select class="select-input" id="selectScalePreset">
+            <option value="continent" selected>🌍 Kontinent (40.000×30.000 · 12 Wiegen · bis 20k Blobs)</option>
+            <option value="regional">🏔️ Regional (16.000×12.000 · 6 Wiegen · bis 8k Blobs)</option>
+            <option value="classic">🏝️ Klassik (4.800×3.600 · 1 Wiege · bis 1.2k Blobs)</option>
+          </select>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Aktives Start-Paradigma (Reset bei Wechsel)</span>
+          </div>
+          <select class="select-input" id="selectStartParadigm">
+            <option value="curriculum" selected>🎓 Standard Curriculum (Wiege → Frontier)</option>
+            <option value="tabula_rasa">🧠 Tabula Rasa Hardcore (0% Vorwissen)</option>
+            <option value="rapid_exodus">🔥 Schneller Exodus (Kollabierende Wiege)</option>
+          </select>
+          <div class="paradigm-desc" id="paradigmDescText">
+            3 fragile Starter-Oasen je Wiege überweiden rasch → zwingt zum Durchbruch durch 6 asymmetrische Skill-Gates in die Sommer-Goldhaine &amp; Winter-Thermaloasen.
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Täglicher Oasen-Nahrungs-Wuchs</span>
+            <span class="control-val" id="valFoodSpawn">3600</span>
+          </div>
+          <input type="range" id="sliderFoodSpawn" min="40" max="10000" step="20" value="3600" />
         </div>
 
         <div class="control-row">
           <div class="control-label">
             <span>Überlebensbedarf / Tag (2x = Kind!)</span>
-            <span class="control-val" id="valSurvivalNeed">1.0 (2.0 = Kind)</span>
+            <span class="control-val" id="valSurvivalNeed">1.00 (2.00 = Kind)</span>
           </div>
           <input type="range" id="sliderSurvivalNeed" min="0.5" max="2.5" step="0.25" value="1.0" />
         </div>
 
-        <div class="control-row">
-          <div class="control-label">
-            <span>Marktpreis pro 1.0 Essen (Gold)</span>
-            <span class="control-val" id="valFoodPrice">5.0 🪙</span>
+        <div class="input-grid-2">
+          <div class="control-row">
+            <div class="control-label">
+              <span>Marktpreis / 1.0🍏</span>
+              <span class="control-val" id="valFoodPrice">5.0 🪙</span>
+            </div>
+            <input type="range" id="sliderFoodPrice" min="1.0" max="15.0" step="0.5" value="5.0" />
           </div>
-          <input type="range" id="sliderFoodPrice" min="1.0" max="15.0" step="0.5" value="5.0" />
+          <div class="control-row">
+            <div class="control-label">
+              <span>Max. Blobs / Haus</span>
+              <span class="control-val" id="valMaxResidents">6 🏠</span>
+            </div>
+            <input type="range" id="sliderMaxResidents" min="2" max="16" step="1" value="6" />
+          </div>
         </div>
       </section>
     </aside>
@@ -206,101 +246,54 @@
     <section class="center-stage">
       <div class="stage-toolbar">
         <div class="tool-group">
-          <button class="btn btn-active god-tool-btn" data-tool="inspect">🔍 Inspizieren</button>
-          <button class="btn god-tool-btn" data-tool="spawn_food">🍏 +8 Nahrung säen</button>
-          <button class="btn god-tool-btn" data-tool="spawn_blob">🧬 Blob setzen</button>
-          <button class="btn god-tool-btn" data-tool="gift_gold">🪙 +15 Gold</button>
-          <button class="btn" id="btnToggleVision" title="Sichtradien &amp; Heimatlinien ein-/ausblenden">👁️ Sichtlinien</button>
+          <button class="btn btn-active god-tool-btn" data-tool="inspect" title="Blob anklicken &amp; Gehirn inspizieren">🔍 Inspizieren</button>
+          <button class="btn god-tool-btn" data-tool="spawn_food" title="Nahrungs-Cluster an Klickposition säen">🍏 +8 Nahrung</button>
+          <button class="btn god-tool-btn" data-tool="toggle_oasis" title="Klick auf Oase: Blüte/Dürre umschalten · Klick ins Ödland: Neue Oase erschaffen">🌴 Oase (Blüte/Dürre)</button>
+          <button class="btn god-tool-btn" data-tool="toggle_rock" title="Klick auf Fels: Abtragen · Klick ins Freie: Neuen Fels-Riegel bauen">🪨 Fels-Riegel</button>
+          <button class="btn god-tool-btn" data-tool="spawn_blob" title="Neuen Blob an Klickposition einsetzen">🧬 Blob setzen</button>
+          <button class="btn god-tool-btn" data-tool="gift_gold" title="Nächstem Blob +15 Gold schenken">🪙 +15 Gold</button>
+          <button class="btn" id="btnToggleVision" title="Sichtradien, Fühler, Gedächtnis &amp; Heimatlinien ein-/ausblenden">👁️ Sensorik</button>
+          <button class="btn btn-active" id="btnToggleZones" title="Konzentrische Trainings-Ringe &amp; Skill-Gates auf der Karte ein-/ausblenden">🗺️ Zonen</button>
         </div>
 
         <div class="kpi-strip">
-          <div class="kpi-item">Blobs: <strong id="kpiPopulation">45</strong></div>
-          <div class="kpi-item">Nahrung: <strong id="kpiFood">95</strong></div>
-          <div class="kpi-item">Gruppen: <strong id="kpiGroups">0</strong></div>
+          <div class="kpi-item">Blobs: <strong id="kpiPopulation">100</strong></div>
+          <div class="kpi-item">Nahrung: <strong id="kpiFood">240</strong></div>
+          <div class="kpi-item" title="Fruchtbare Oasen auf der Karte">Oasen: <strong id="kpiOases">12🌴</strong></div>
+          <div class="kpi-item">Siedlungen: <strong id="kpiGroups">0</strong></div>
+          <div class="kpi-item" title="Pionier-Gründungen &amp; strategische Umzüge zu Oasen">Umzüge: <strong id="kpiMigrations">0🏕️</strong></div>
           <div class="kpi-item">Handel: <strong id="kpiTrades">0</strong></div>
+          <div class="kpi-item" title="Erfolgreiche Raubzüge / Durch Wachtürme, Schluchten &amp; Clans abgewehrte Angriffe">Konflikt: <strong id="kpiRaids">0⚔️ / 0🛡️</strong></div>
+          <div class="kpi-item" title="Durchschnittliche soziale Reputation [-1..+1] &amp; Anzahl Geächteter (Outlaws ☠️)">Ruf: <strong id="kpiReputation">+0.00 (0☠️)</strong></div>
+          <div class="kpi-item" title="Gebaute Haus-Upgrades (🌾 Farm, 🏛️ Speicher, 🛡️ Wachturm)">Ausbau: <strong id="kpiUpgrades">0🏗️</strong></div>
           <div class="kpi-item">Geburten: <strong id="kpiBirths">0</strong></div>
         </div>
       </div>
 
-      <div class="canvas-wrapper">
+      <div class="canvas-wrapper" id="canvasViewport" tabindex="0" role="region" aria-label="Interaktive 2D-Simulationswelt (Ziehen zum Bewegen, Mausrad zum Zoomen)">
         <canvas id="worldCanvas" width="1200" height="800"></canvas>
+
+        <!-- Floating Camera & Zoom Overlay Controls -->
+        <div class="camera-hud">
+          <button class="btn btn-sm" id="btnCamFollow" title="Ausgewählten Blob automatisch mit der Kamera verfolgen">🎯 Blob folgen</button>
+          <button class="btn btn-sm" id="btnCamFit" title="Gesamte 4800×3600 Weltkarte einpassen">🗺️ Ganze Karte</button>
+          <button class="btn btn-sm" id="btnCamZoomIn" title="Hineinzoomen (+)">➕</button>
+          <span class="cam-zoom-badge" id="camZoomBadge">30%</span>
+          <button class="btn btn-sm" id="btnCamZoomOut" title="Herauszoomen (-)">➖</button>
+        </div>
+
+        <!-- Interactive World Minimap -->
+        <div class="minimap-card" title="Klicken oder Ziehen, um die Kamera über die 4800×3600 Karte zu bewegen">
+          <div class="minimap-header">
+            <span>🗺️ Weltkarte</span>
+            <span id="minimapCoords">X:2400 Y:1800</span>
+          </div>
+          <canvas id="minimapCanvas" width="208" height="156"></canvas>
+        </div>
       </div>
     </section>
-
-    <!-- Right Sidebar: Blob Brain Inspector, Stats Charts & Groups -->
-    <aside class="sidebar-right">
-      <!-- 1. Selected Blob & Live Neural Network Inspector -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title" id="inspectorTitle">🔬 Blob-Inspektor (#1)</span>
-          <span class="badge-dim" id="inspectorGroupBadge">Einzelgänger</span>
-        </div>
-
-        <div class="stat-grid">
-          <div class="stat-box">
-            <span>Tages-Essen (1x / 2x)</span>
-            <strong id="inspFoodToday">0.00 / 2.00</strong>
-          </div>
-          <div class="stat-box">
-            <span>Geld &amp; Überschuss</span>
-            <strong id="inspMoney">6.0 🪙 (+0.0🍏)</strong>
-          </div>
-          <div class="stat-box">
-            <span>Energie &amp; Alter</span>
-            <strong id="inspEnergyAge">85% · 0 Tage</strong>
-          </div>
-          <div class="stat-box">
-            <span>Gen · Kinder · Handel</span>
-            <strong id="inspGenChildren">G1 · 0👶 · 0🤝</strong>
-          </div>
-        </div>
-
-        <div class="control-row">
-          <div class="control-label">
-            <span>Körper-Gene (Speed / Sicht / Größe)</span>
-            <span class="control-val" id="inspGenesText">1.00x / 1.00x / 1.00x</span>
-          </div>
-        </div>
-
-        <div class="control-row">
-          <div class="control-label">
-            <span>Live Neuronales Netz (Aktivierung &amp; Synapsen)</span>
-            <span class="control-val" id="inspParamCount">749 Params</span>
-          </div>
-          <canvas id="nnCanvas" width="335" height="215"></canvas>
-        </div>
-      </section>
-
-      <!-- 2. Real-time Evolution & Economy Chart -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">📈 Evolutions- &amp; Wirtschafts-Verlauf</span>
-          <select class="select-input" id="selectChartMode" style="width: 155px; padding: 2px 6px;">
-            <option value="pop">Population &amp; Gruppen</option>
-            <option value="econ">Ø Geld &amp; Handel</option>
-            <option value="genes">Gene (Speed/Sense/Size)</option>
-          </select>
-        </div>
-        <canvas id="chartCanvas" width="335" height="125"></canvas>
-      </section>
-
-      <!-- 3. Active Groups & Live Event Ticker -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">🏕️ Aktive Gruppen &amp; Dörfer</span>
-        </div>
-        <div class="group-list" id="groupListContainer">
-          <div class="event-item">Blobs knüpfen Kontakte bei Begegnung...</div>
-        </div>
-
-        <div class="section-header" style="margin-top: 4px;">
-          <span class="section-title">📜 Live-Ereignisse</span>
-        </div>
-        <div class="event-feed" id="eventFeedContainer"></div>
-      </section>
-    </aside>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 numpy>=1.24.0
+numba>=0.60.0
 fastapi>=0.92.0
 uvicorn>=0.17.6
 wsproto>=1.2.0

@@ -1,0 +1,329 @@
+{
+  "timestamp": "2026-11-09T13:45:15Z",
+  "config": {
+    "blobs": 2000,
+    "neurons": 10000,
+    "ticks": 50,
+    "preset": "continent",
+    "seed": 42,
+    "warmup": 3,
+    "ticks_per_day": 600
+  },
+  "summary": {
+    "all_mean_tick_ms": 697.63,
+    "all_tps": 1.4,
+    "regular_mean_tick_ms": 697.63,
+    "regular_tps": 1.4,
+    "median_tick_ms": 133.45,
+    "p90_tick_ms": 2077.66,
+    "p95_tick_ms": 2347.54,
+    "p99_tick_ms": 2650.02,
+    "min_tick_ms": 107.01,
+    "max_tick_ms": 2878.68,
+    "peak_rss_gb": 2.943,
+    "rss_drift_gb": 0.183,
+    "all_contracts_passed": false
+  },
+  "subsystems": {
+    "kinematics": {
+      "mean_ms": 1.16,
+      "p95_ms": 1.58
+    },
+    "observation_prep": {
+      "mean_ms": 0.66,
+      "p95_ms": 0.98
+    },
+    "neural_inference": {
+      "mean_ms": 619.06,
+      "p95_ms": 2269.96
+    },
+    "foraging": {
+      "mean_ms": 2.13,
+      "p95_ms": 3.3
+    },
+    "learning": {
+      "mean_ms": 65.08,
+      "p95_ms": 84.83
+    },
+    "interactions": {
+      "mean_ms": 9.53
+    }
+  },
+  "memory": {
+    "initial_rss_gb": 0.119,
+    "warmup_rss_gb": 2.759,
+    "final_rss_gb": 2.943,
+    "peak_rss_gb": 2.943,
+    "rss_drift_gb": 0.183,
+    "peak_commit_gb": 3.687
+  },
+  "population": {
+    "initial_blobs": 2000,
+    "final_living": 2000,
+    "total_births": 0,
+    "total_deaths": 0,
+    "total_food_eaten": 1096.225,
+    "total_trades": 148,
+    "total_raids": 0
+  },
+  "assertions": {
+    "regular_tps_gt_30": false,
+    "all_ticks_mean_lt_40ms": false,
+    "peak_rss_lt_3_8_gb": true,
+    "memory_drift_lt_0_20_gb": true,
+    "population_viable": true,
+    "all_passed": false
+  },
+  "ticks": [
+    {
+      "tick": 1,
+      "duration_ms": 112.5,
+      "rss_gb": 2.759
+    },
+    {
+      "tick": 2,
+      "duration_ms": 115.6,
+      "rss_gb": 2.759
+    },
+    {
+      "tick": 3,
+      "duration_ms": 337.04,
+      "rss_gb": 2.793
+    },
+    {
+      "tick": 4,
+      "duration_ms": 129.02,
+      "rss_gb": 2.793
+    },
+    {
+      "tick": 5,
+      "duration_ms": 122.87,
+      "rss_gb": 2.793
+    },
+    {
+      "tick": 6,
+      "duration_ms": 2074.04,
+      "rss_gb": 2.873
+    },
+    {
+      "tick": 7,
+      "duration_ms": 123.02,
+      "rss_gb": 2.92
+    },
+    {
+      "tick": 8,
+      "duration_ms": 121.4,
+      "rss_gb": 2.929
+    },
+    {
+      "tick": 9,
+      "duration_ms": 2110.22,
+      "rss_gb": 2.63
+    },
+    {
+      "tick": 10,
+      "duration_ms": 216.81,
+      "rss_gb": 1.967
+    },
+    {
+      "tick": 11,
+      "duration_ms": 183.83,
+      "rss_gb": 2.668
+    },
+    {
+      "tick": 12,
+      "duration_ms": 1860.43,
+      "rss_gb": 2.921
+    },
+    {
+      "tick": 13,
+      "duration_ms": 121.5,
+      "rss_gb": 2.937
+    },
+    {
+      "tick": 14,
+      "duration_ms": 129.46,
+      "rss_gb": 2.937
+    },
+    {
+      "tick": 15,
+      "duration_ms": 1938.48,
+      "rss_gb": 2.937
+    },
+    {
+      "tick": 16,
+      "duration_ms": 117.05,
+      "rss_gb": 2.937
+    },
+    {
+      "tick": 17,
+      "duration_ms": 119.11,
+      "rss_gb": 2.937
+    },
+    {
+      "tick": 18,
+      "duration_ms": 1463.97,
+      "rss_gb": 2.937
+    },
+    {
+      "tick": 19,
+      "duration_ms": 117.48,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 20,
+      "duration_ms": 107.89,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 21,
+      "duration_ms": 1433.87,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 22,
+      "duration_ms": 126.61,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 23,
+      "duration_ms": 127.78,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 24,
+      "duration_ms": 1765.33,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 25,
+      "duration_ms": 129.78,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 26,
+      "duration_ms": 129.37,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 27,
+      "duration_ms": 1946.96,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 28,
+      "duration_ms": 132.25,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 29,
+      "duration_ms": 134.66,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 30,
+      "duration_ms": 1746.72,
+      "rss_gb": 2.941
+    },
+    {
+      "tick": 31,
+      "duration_ms": 138.33,
+      "rss_gb": 2.941
+    },
+    {
+      "tick": 32,
+      "duration_ms": 146.01,
+      "rss_gb": 2.941
+    },
+    {
+      "tick": 33,
+      "duration_ms": 2354.23,
+      "rss_gb": 2.942
+    },
+    {
+      "tick": 34,
+      "duration_ms": 124.2,
+      "rss_gb": 2.942
+    },
+    {
+      "tick": 35,
+      "duration_ms": 128.48,
+      "rss_gb": 2.942
+    },
+    {
+      "tick": 36,
+      "duration_ms": 2339.37,
+      "rss_gb": 2.935
+    },
+    {
+      "tick": 37,
+      "duration_ms": 118.19,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 38,
+      "duration_ms": 122.18,
+      "rss_gb": 2.941
+    },
+    {
+      "tick": 39,
+      "duration_ms": 2412.03,
+      "rss_gb": 2.933
+    },
+    {
+      "tick": 40,
+      "duration_ms": 148.34,
+      "rss_gb": 2.938
+    },
+    {
+      "tick": 41,
+      "duration_ms": 136.9,
+      "rss_gb": 2.943
+    },
+    {
+      "tick": 42,
+      "duration_ms": 2878.68,
+      "rss_gb": 1.787
+    },
+    {
+      "tick": 43,
+      "duration_ms": 228.42,
+      "rss_gb": 2.299
+    },
+    {
+      "tick": 44,
+      "duration_ms": 220.57,
+      "rss_gb": 2.806
+    },
+    {
+      "tick": 45,
+      "duration_ms": 2057.67,
+      "rss_gb": 2.927
+    },
+    {
+      "tick": 46,
+      "duration_ms": 115.4,
+      "rss_gb": 2.942
+    },
+    {
+      "tick": 47,
+      "duration_ms": 109.57,
+      "rss_gb": 2.942
+    },
+    {
+      "tick": 48,
+      "duration_ms": 1591.13,
+      "rss_gb": 2.943
+    },
+    {
+      "tick": 49,
+      "duration_ms": 107.01,
+      "rss_gb": 2.943
+    },
+    {
+      "tick": 50,
+      "duration_ms": 109.48,
+      "rss_gb": 2.943
+    }
+  ]
+}

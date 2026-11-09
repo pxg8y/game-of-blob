@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blob Life — Analyse-Cockpit (/analyse)</title>
+  <meta name="description" content="Retrospektives Telemetrie-, Zyklus-, Genetik- und Weight-Analyse-Cockpit für Blob Life." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230ea5e9'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='sans-serif' font-weight='800' font-size='18' fill='%23041d29'%3EA%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/styles.css?v=8" />
+</head>
+<body class="cockpit-body">
+  <!-- Top Command Header -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" style="background: var(--accent-sky); color: #041d29;">📊</div>
+      <h1>Blob Life Analyse-Cockpit <span class="brand-sub">Zyklus-, Gemeinschafts-, Genetik- &amp; Weight-Telemetrie</span></h1>
+    </div>
+
+    <div class="day-cycle-bar">
+      <div class="day-badge" id="anDayBadge">Tag 1</div>
+      <div class="season-badge" id="anSeasonBadge">🌸 Frühling</div>
+      <div class="time-progress-wrap">
+        <div class="time-phase-label">
+          <span id="anPhaseLabel">☀️ Live-Telemetrie verbunden</span>
+          <span id="anTickLabel">0 / 360</span>
+        </div>
+        <div class="time-progress-track">
+          <div class="time-progress-fill" id="anTimeProgressFill"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="transport-controls">
+      <a class="btn btn-cockpit-nav" href="/" title="Zurück zur 2D-Simulations-Arena">🗺️ Zurück zur Arena</a>
+      <button class="btn btn-primary" id="anBtnPlayPause" title="Simulation pausieren / fortsetzen">⏸ Pause</button>
+      <button class="btn" id="anBtnStepDay" title="1 Tag vorwärts berechnen">+1 Tag</button>
+      <button class="btn" id="anBtnStep10Days" title="10 Tage im Schnelllauf berechnen">+10 Tage</button>
+
+      <div class="speed-group" role="group" aria-label="Simulationsgeschwindigkeit">
+        <button class="speed-btn active" data-speed="1">1x</button>
+        <button class="speed-btn" data-speed="5">5x</button>
+        <button class="speed-btn" data-speed="15">15x</button>
+        <button class="speed-btn" data-speed="45">45x</button>
+        <button class="speed-btn" data-speed="150">150x</button>
+        <button class="speed-btn" data-speed="500">500x</button>
+      </div>
+
+      <button class="btn" id="anBtnExportTelemetry" title="Vollständiges Telemetrie-Logbuch als JSON herunterladen">📥 Telemetrie JSON</button>
+      <button class="btn" id="anBtnExportCsv" title="Tages-Zeitreihen als CSV herunterladen">📊 Tages-CSV</button>
+    </div>
+  </header>
+
+  <main class="cockpit-main">
+    <!-- Automated Root-Cause & Rise/Collapse Diagnostic Banner -->
+    <section class="diagnostic-banner" aria-label="Automatische Ursachen-Diagnose">
+      <div class="diagnostic-banner-header">
+        <div class="diagnostic-banner-title">
+          <span>🩺 Automatische Rise-&amp;-Collapse Systemdiagnose</span>
+          <span class="badge-dim" id="diagDaysTrackedBadge">0 Tage erfasst</span>
+        </div>
+        <span style="font-size: 12px; color: var(--text-muted);">
+          Unveränderte Beobachtung der Blob-KI, Gemeinschafts-Aktionen, Genetik &amp; Synapsen-Entwicklung
+        </span>
+      </div>
+      <div class="diagnostic-findings-row" id="diagnosticFindingsRow">
+        <div class="diag-chip chip-info">⏳ Sammle Telemetrie-Tagesabschlüsse… Klicke auf <strong>+1 Tag</strong> oder <strong>+10 Tage</strong> für sofortige Zeitreihen-Daten.</div>
+      </div>
+    </section>
+
+    <!-- 8 Telemetry KPI Cards -->
+    <section class="cockpit-kpi-grid" aria-label="Kern-Metriken">
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Population &amp; Peak</span><span>👥</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnPop">100</div>
+        <div class="cockpit-kpi-sub" id="kpiAnPopSub">Peak: 100 · In Siedlung: 0%</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Stämme (Aktiv / Gesamt)</span><span>🏛️</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnTribes">0 / 0</div>
+        <div class="cockpit-kpi-sub" id="kpiAnTribesSub">Häuser: 0 · Sezessionen: 0</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Dominanter Stamm</span><span>👑</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnDominance">0%</div>
+        <div class="cockpit-kpi-sub" id="kpiAnDominanceSub">Noch kein Großstamm</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Kollaps-Zyklen &amp; HoF</span><span>📉</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnCollapses">0</div>
+        <div class="cockpit-kpi-sub" id="kpiAnCollapsesSub">HoF-Notrettungen: 0</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Kritische Magen-Verkäufe</span><span>⚠️</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnStomachSales">0</div>
+        <div class="cockpit-kpi-sub" id="kpiAnStomachSalesSub">Verkauf trotz &lt; Überlebensbedarf</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Tode trotz Gold-Besitz</span><span>🪙💀</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnDeathsWithGold">0</div>
+        <div class="cockpit-kpi-sub" id="kpiAnDeathsWithGoldSub">Fernab: 0 · Depot leer: 0</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Ø Basaler Gen-Verbrauch</span><span>🔥</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnBasalCost">0.060</div>
+        <div class="cockpit-kpi-sub" id="kpiAnBasalCostSub">Speed: 1.00x · Größe: 1.00x</div>
+      </div>
+
+      <div class="cockpit-kpi-card">
+        <div class="cockpit-kpi-label"><span>Gehirn-Diversität &amp; Drift</span><span>🧠</span></div>
+        <div class="cockpit-kpi-value" id="kpiAnBrainDiv">0.000</div>
+        <div class="cockpit-kpi-sub" id="kpiAnBrainDivSub">Drift ab T1: 0.000 · Synapsen: 0</div>
+      </div>
+    </section>
+
+    <!-- Cockpit Navigation Tabs -->
+    <nav class="cockpit-tabs" role="tablist" aria-label="Analyse-Bereiche">
+      <button class="cockpit-tab-btn active" role="tab" aria-selected="true" data-tab="tab-cycles">
+        📈 1. Zyklus- &amp; Kollaps-Diagnose
+      </button>
+      <button class="cockpit-tab-btn" role="tab" aria-selected="false" data-tab="tab-community">
+        🤝 2. Gemeinschafts-Aktionen &amp; Stämme
+      </button>
+      <button class="cockpit-tab-btn" role="tab" aria-selected="false" data-tab="tab-genetics">
+        🧬 3. Genetische Evolution &amp; Metabolismus
+      </button>
+      <button class="cockpit-tab-btn" role="tab" aria-selected="false" data-tab="tab-weights">
+        🧠 4. Weight-Entwicklung &amp; 26×6 Kopplung
+      </button>
+      <button class="cockpit-tab-btn" role="tab" aria-selected="false" data-tab="tab-logs">
+        📜 5. Ereignis- &amp; Tages-Logbuch
+      </button>
+    </nav>
+
+    <!-- =====================================================================
+         TAB 1: ZYKLUS- & KOLLAPS-DIAGNOSE
+         ===================================================================== -->
+    <section class="cockpit-tab-panel active" id="tab-cycles" role="tabpanel">
+      <div class="cockpit-card">
+        <div class="cockpit-card-header">
+          <div>
+            <h2 class="cockpit-card-title">📈 Rise-&amp;-Collapse Master-Timeline (Tages-Chronik)</h2>
+            <p class="cockpit-card-subtitle">
+              Zeigt Populationswellen, Dominanz des größten Stammes, Winter-Phasen (blaue Bänder), erkannte Kollaps-Einbrüche (rote Linien) und Hall-of-Fame Not-Respawns. Fahre mit der Maus über das Diagramm für exakte Tageswerte.
+            </p>
+          </div>
+          <div class="cockpit-controls-inline">
+            <label for="selectCycleChartMode" style="font-size: 12px; color: var(--text-secondary);">Ansicht:</label>
+            <select class="select-input" id="selectCycleChartMode" style="width: auto;">
+              <option value="pop_dominance" selected>Population, Dominanter Stamm &amp; Winter-Bänder</option>
+              <option value="deaths_breakdown">Todesursachen &amp; Hunger-Fallen (Mittag vs. Abend vs. Gold-Besitz)</option>
+              <option value="ecology_depots">Ökologie: Wildnahrung, Haus-Depots &amp; Überweidete Oasen</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cockpit-canvas-box">
+          <canvas class="cockpit-canvas" id="cycleTimelineCanvas" width="1400" height="320"></canvas>
+        </div>
+        <div class="heatmap-tooltip-bar" id="cycleTimelineHoverReadout">
+          <span>💡 Bewege den Mauszeiger über die Zeitachse, um einen einzelnen Tag im Detail zu inspizieren.</span>
+          <span id="cycleLegendSummary">❄️ Blau = Winter · 🚨 Rot = Kollaps · 🧬 Violett = HoF-Respawn</span>
+        </div>
+      </div>
+
+      <div class="cockpit-card">
+        <div class="cockpit-card-header">
+          <div>
+            <h2 class="cockpit-card-title">🚨 Erkannte Kollaps-Ereignisse &amp; Autopsie-Berichte</h2>
+            <p class="cockpit-card-subtitle">
+              Jeder Bevölkerungseinbruch ≥ 35% vom vorangehenden Peak wird automatisch mit seinen Auslösern (Winter, Überweidung, Monokultur, Magen-Verkäufe, metabolische Kosten) protokolliert.
+            </p>
+          </div>
+          <span class="badge-dim" id="collapseCountBadge">0 Kollapse protokolliert</span>
+        </div>
+        <div class="collapse-cards-list" id="collapseCardsContainer">
+          <div class="empty-state-box">
+            Noch kein Bevölkerungseinbruch ≥ 35% aufgetreten. Sobald ein Rise-&amp;-Collapse-Zyklus stattfindet, erscheint hier die detaillierte Ursachen-Autopsie.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         TAB 2: GEMEINSCHAFTS-AKTIONEN & STAMMES-CHRONIK
+         ===================================================================== -->
+    <section class="cockpit-tab-panel" id="tab-community" role="tabpanel">
+      <div class="cockpit-grid-2">
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">🤝 Gemeinschafts-Aktionen der Blobs pro Tag</h2>
+              <p class="cockpit-card-subtitle">
+                Wie haben die Blobs Nahrung gesammelt, gehandelt, Vorräte geteilt, gekämpft und ihre Siedlungen ausgebaut?
+              </p>
+            </div>
+            <div class="cockpit-controls-inline">
+              <select class="select-input" id="selectCommunityActionMode" style="width: auto;">
+                <option value="trade_ration" selected>Handel, Magen-Notverkäufe &amp; Depot-Rationen</option>
+                <option value="foraging_biomes">Nahrungsernte nach Biom (Wiege / Goldhain / Thermal / Garten)</option>
+                <option value="conflict_settle">Konflikt, Raubzüge, Eroberungen, Sezessionen &amp; Ausbau</option>
+                <option value="action_profile">Neuronales Entscheidungs-Profil (Sprint, Handel, Gruppe, Siedeln)</option>
+              </select>
+            </div>
+          </div>
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="communityActionsCanvas" width="760" height="270"></canvas>
+          </div>
+          <div class="chart-legend-row" id="communityActionsLegend"></div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title" id="tribeDetailTitle">🏛️ Stammes-Lebenszyklus im Detail</h2>
+              <p class="cockpit-card-subtitle">
+                Klicke unten in der Stammes-Tabelle auf einen Stamm (aktiv oder ausgestorben), um seinen Aufstieg, seine Vorräte, Kriege und seinen Kollaps nachzuverfolgen.
+              </p>
+            </div>
+            <span class="badge-dim" id="tribeDetailBadge">Größter Stamm ausgewählt</span>
+          </div>
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="tribeDetailCanvas" width="760" height="270"></canvas>
+          </div>
+          <div class="chart-legend-row" id="tribeDetailSummary"></div>
+        </div>
+      </div>
+
+      <!-- Full Historical & Active Tribe Table -->
+      <div class="cockpit-card">
+        <div class="cockpit-card-header">
+          <div>
+            <h2 class="cockpit-card-title">📜 Vollständige Stammes-Chronik (Alle aktiven &amp; ausgestorbenen Stämme)</h2>
+            <p class="cockpit-card-subtitle">
+              Zeigt, wann welche Stämme gegründet wurden, warum nach einigen hundert Tagen nur noch ein Stamm übrig bleibt und wie oft dieser selbst kollabiert.
+            </p>
+          </div>
+          <div class="cockpit-controls-inline">
+            <select class="select-input" id="selectTribeFilter" style="width: auto;">
+              <option value="all" selected>Alle Stämme (Aktiv &amp; Ausgestorben)</option>
+              <option value="alive">Nur aktive Stämme</option>
+              <option value="extinct">Nur ausgestorbene Stämme</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrapper" role="region" aria-label="Stammes-Chronik Tabelle" tabindex="0">
+          <table class="data-table" id="tribesTable">
+            <thead>
+              <tr>
+                <th scope="col">Stamm</th>
+                <th scope="col">Status</th>
+                <th scope="col">Zeitraum</th>
+                <th scope="col">Peak / Aktuell</th>
+                <th scope="col">Häuser Peak</th>
+                <th scope="col">Geburten / Tode</th>
+                <th scope="col">Handel (Magen)</th>
+                <th scope="col">Raids / Eroberungen</th>
+                <th scope="col">Ø Speed · Größe · Cost</th>
+              </tr>
+            </thead>
+            <tbody id="tribesTableBody">
+              <tr>
+                <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 18px;">
+                  Noch keine Stämme gegründet — Häuser schließen sich bei Nachbarschafts-Kontakt zusammen.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         TAB 3: GENETISCHE EVOLUTION & METABOLISMUS
+         ===================================================================== -->
+    <section class="cockpit-tab-panel" id="tab-genetics" role="tabpanel">
+      <div class="cockpit-grid-asym">
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">🧬 Genetische Evolution &amp; Perzentil-Bänder (p10 – p50 – p90)</h2>
+              <p class="cockpit-card-subtitle">
+                Verfolgt die genetische Drift von Geschwindigkeit (<code>speed</code>), Größe (<code>size</code>), Sichtweite (<code>sense</code>) und dem daraus resultierenden basalen Grundumsatz (<code>_basal_cost</code>).
+              </p>
+            </div>
+            <div class="cockpit-controls-inline">
+              <select class="select-input" id="selectGeneticsMode" style="width: auto;">
+                <option value="all_means" selected>Alle Kern-Gene im Vergleich (Speed / Sicht / Größe / Effizienz)</option>
+                <option value="basal_cost">🔥 Basaler Energieverbrauch (_basal_cost) mit p10–p90 Band</option>
+                <option value="speed">⚡ Speed-Gen (p10 / Median / Mean / p90 Band)</option>
+                <option value="size">💪 Größen-Gen (p10 / Median / Mean / p90 Band)</option>
+                <option value="sense">👁️ Sichtweiten-Gen (p10 / Median / Mean / p90 Band)</option>
+                <option value="gen_age">👶 Generationen-Fortschritt &amp; Ø Lebensalter</option>
+              </select>
+            </div>
+          </div>
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="geneticsChartCanvas" width="880" height="310"></canvas>
+          </div>
+          <div class="chart-legend-row" id="geneticsChartLegend"></div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">🔬 Live Bio-Energetik Scatter (Speed vs. Größe)</h2>
+              <p class="cockpit-card-subtitle">
+                Jeder Punkt ist ein lebender Blob. Oben rechts liegt die metabolische Hochkosten-Zone (<code>speed¹·³⁵ × size¹·¹⁵</code>), die im Winter zu Massen-Hunger führt.
+              </p>
+            </div>
+            <span class="badge-dim" id="scatterCountBadge">100 Blobs</span>
+          </div>
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="geneScatterCanvas" width="540" height="310"></canvas>
+          </div>
+          <div class="chart-legend-row">
+            <span class="legend-item"><span class="legend-swatch" style="background: #10b981;"></span>Niedriger Grundumsatz (&lt;0.055)</span>
+            <span class="legend-item"><span class="legend-swatch" style="background: #f59e0b;"></span>Mittlerer Grundumsatz (0.055–0.075)</span>
+            <span class="legend-item"><span class="legend-swatch" style="background: #f43f5e;"></span>Kritischer Grundumsatz (&gt;0.075)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         TAB 4: WEIGHT-ENTWICKLUNG & 26×6 GEHIRN-KOPPLUNG
+         ===================================================================== -->
+    <section class="cockpit-tab-panel" id="tab-weights" role="tabpanel">
+      <div class="cockpit-grid-2">
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">🧭 Evolution der 10 funktionalen Sensor→Aktion Pfade</h2>
+              <p class="cockpit-card-subtitle">
+                Zeigt über die effektive Gewichtsmatrix <code>M = W₀ · W₁ · … · Wₗ</code>, welche Reiz-Reaktions-Ketten die Gemeinschaft im Lauf der Jahrhunderte verstärkt oder verlernt hat.
+              </p>
+            </div>
+            <div class="cockpit-controls-inline">
+              <select class="select-input" id="selectPathwayGroup" style="width: auto;">
+                <option value="core" selected>Kern-Pfade (Nahrung, Heimkehr, Sprint, Handel, Sozial, Siedeln, Ruf)</option>
+                <option value="navigation">Navigation &amp; Umwelt (Oasen-Kompass, Gedächtnis, Hindernis-Fühler)</option>
+                <option value="all">Alle 10 Pfade gleichzeitig</option>
+              </select>
+            </div>
+          </div>
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="pathwayChartCanvas" width="760" height="280"></canvas>
+          </div>
+          <div class="chart-legend-row" id="pathwayChartLegend"></div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">📐 Synaptische Normen, Drift ab Tag 1 &amp; Klon-Diversität</h2>
+              <p class="cockpit-card-subtitle">
+                Sinkt die Gehirn-Diversität (<code>brain_diversity_std</code>) gegen null, handeln alle Blobs wie genetische Klone und laufen synchron in dieselbe Überweidungs-Falle.
+              </p>
+            </div>
+            <div class="cockpit-controls-inline">
+              <select class="select-input" id="selectWeightMetricsMode" style="width: auto;">
+                <option value="drift_diversity" selected>Weight-Drift ab Tag 1, Lern-Tempo &amp; Gehirn-Diversität</option>
+                <option value="layer_norms">Layer-L2-Normen &amp; Mittlerer Gewichtsbetrag |W|</option>
+                <option value="saturation">Synapsen-Sättigung (% |W| &gt; 1.5) &amp; Max-Gewichte</option>
+              </select>
+            </div>
+          </div>
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="weightMetricsCanvas" width="760" height="280"></canvas>
+          </div>
+          <div class="chart-legend-row" id="weightMetricsLegend"></div>
+        </div>
+      </div>
+
+      <div class="cockpit-grid-asym">
+        <!-- Interactive 26x6 Sensor-to-Action Coupling Heatmap with Historical Day Scrubber -->
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">🎛️ Interaktive 26×6 Sensor-zu-Aktion Kopplungs-Heatmap (M = W₀ · … · Wₗ)</h2>
+              <p class="cockpit-card-subtitle">
+                26 Sensor-Inputs (Zeilen) × 6 Aktions-Outputs (Spalten). Nutze den Zeitreise-Regler, um die Gehirn-Kopplung an jedem beliebigen historischen Tag oder als Differenz zu Tag 1 zu untersuchen.
+              </p>
+            </div>
+            <div class="cockpit-controls-inline">
+              <select class="select-input" id="selectHeatmapMode" style="width: auto;">
+                <option value="absolute" selected>Absolute Kopplung M(Tag)</option>
+                <option value="delta_day1">Δ Veränderung seit Tag 1 (M(Tag) − M(Tag 1))</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="scrubber-bar">
+            <span style="font-size: 12px; color: var(--text-secondary);">⏱️ Historischer Tag:</span>
+            <input type="range" id="heatmapDaySlider" min="0" max="0" step="1" value="0" />
+            <strong id="heatmapDayLabel" style="font-family: var(--font-mono); color: var(--accent-amber);">Live (Aktuell)</strong>
+          </div>
+
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="couplingHeatmapCanvas" width="860" height="440"></canvas>
+          </div>
+
+          <div class="heatmap-tooltip-bar" id="heatmapHoverReadout">
+            <span>🔍 Fahre mit der Maus über eine Zelle der 26×6 Matrix, um Sensor, Aktion und Kopplungsstärke auszulesen.</span>
+            <span>🟩 Grün = Positiv erregend · 🟥 Rot = Negativ hemmend</span>
+          </div>
+        </div>
+
+        <!-- Live Champion / Selected Blob Neural Topology -->
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title" id="cockpitBrainTitle">🧠 Live Champion-Gehirn Topologie</h2>
+              <p class="cockpit-card-subtitle">
+                Echtzeit-Aktivierung und Synapsen-Struktur des aktuell ausgewählten / erfolgreichsten Blobs.
+              </p>
+            </div>
+            <span class="badge-dim" id="cockpitBrainParamBadge">26 → 24 → 24 → 6</span>
+          </div>
+
+          <div class="stat-grid">
+            <div class="stat-box"><span>Stamm</span><strong id="ckInspGroup">-</strong></div>
+            <div class="stat-box"><span>Nahrung / Alter</span><strong id="ckInspFoodAge">-</strong></div>
+            <div class="stat-box"><span>Gold / Überschuss</span><strong id="ckInspMoney">-</strong></div>
+            <div class="stat-box"><span>Gene (Spd/Sns/Siz)</span><strong id="ckInspGenes">-</strong></div>
+          </div>
+
+          <div class="cockpit-canvas-box">
+            <canvas class="cockpit-canvas" id="cockpitNnCanvas" width="460" height="340"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         TAB 5: EREIGNIS- & TAGES-LOGBUCH
+         ===================================================================== -->
+    <section class="cockpit-tab-panel" id="tab-logs" role="tabpanel">
+      <div class="cockpit-grid-asym">
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">📋 Numerisches Tages-Telemetrie-Logbuch</h2>
+              <p class="cockpit-card-subtitle">
+                Alle abgeschlossenen Simulationstage mit Population, Stammes-Dominanz, Geburten, Todesursachen, Handel, Magen-Verkäufen, Genetik und Weight-Drift.
+              </p>
+            </div>
+            <span class="badge-dim" id="dailyLogCountBadge">0 Tage</span>
+          </div>
+
+          <div class="table-wrapper" role="region" aria-label="Tages-Telemetrie Tabelle" tabindex="0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Tag</th>
+                  <th scope="col">Saison</th>
+                  <th scope="col">Pop (In Grp)</th>
+                  <th scope="col">Stämme (Dom %)</th>
+                  <th scope="col">Geb. / Tode (Abend/Gold)</th>
+                  <th scope="col">Handel (Magen / Ration)</th>
+                  <th scope="col">Raids / Upg.</th>
+                  <th scope="col">Ø Speed / Size / Cost</th>
+                  <th scope="col">Weight-Drift / Div.</th>
+                </tr>
+              </thead>
+              <tbody id="dailyLogTableBody">
+                <tr>
+                  <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 18px;">
+                    Noch keine abgeschlossenen Tage in dieser Sitzung — drücke oben auf <strong>+1 Tag</strong> oder <strong>+10 Tage</strong>.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="cockpit-card-header">
+            <div>
+              <h2 class="cockpit-card-title">📣 Chronologisches Ereignis-Protokoll</h2>
+              <p class="cockpit-card-subtitle">
+                Durchsuche und filtere alle Siedlungsgründungen, Eroberungen, Sezessionen, Winter-Einbrüche und Hall-of-Fame Respawns.
+              </p>
+            </div>
+          </div>
+
+          <div class="cockpit-controls-inline">
+            <input type="text" class="text-input" id="eventSearchInput" placeholder="Ereignisse durchsuchen (z.B. Stamm, Winter, Raubzug)…" style="flex: 1;" />
+            <select class="select-input" id="eventCategoryFilter" style="width: auto;">
+              <option value="all" selected>Alle Kategorien</option>
+              <option value="collapse">❄️ Winter / Hunger / HoF-Respawn</option>
+              <option value="tribe">🏛️ Siedlung / Stamm / Fusion</option>
+              <option value="conflict">⚔️ Raubzug / Eroberung / Sezession</option>
+              <option value="upgrade">🏗️ Ausbau / Oase / Migration</option>
+            </select>
+          </div>
+
+          <div class="cockpit-event-log" id="cockpitEventLogContainer">
+            <div class="empty-state-box">Verbinde mit Simulations-Log…</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/analyse.js?v=8"></script>
+</body>
+</html>

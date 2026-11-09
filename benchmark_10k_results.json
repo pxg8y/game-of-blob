@@ -1,0 +1,329 @@
+{
+  "timestamp": "2026-11-09T13:55:08Z",
+  "config": {
+    "blobs": 2000,
+    "neurons": 10000,
+    "ticks": 50,
+    "preset": "continent",
+    "seed": 42,
+    "warmup": 3,
+    "ticks_per_day": 600
+  },
+  "summary": {
+    "all_mean_tick_ms": 502.62,
+    "all_tps": 2.0,
+    "regular_mean_tick_ms": 502.62,
+    "regular_tps": 2.0,
+    "median_tick_ms": 123.7,
+    "p90_tick_ms": 1456.62,
+    "p95_tick_ms": 1471.53,
+    "p99_tick_ms": 1500.64,
+    "min_tick_ms": 102.06,
+    "max_tick_ms": 1506.53,
+    "peak_rss_gb": 3.109,
+    "rss_drift_gb": -0.009,
+    "all_contracts_passed": false
+  },
+  "subsystems": {
+    "kinematics": {
+      "mean_ms": 1.1,
+      "p95_ms": 1.28
+    },
+    "observation_prep": {
+      "mean_ms": 0.6,
+      "p95_ms": 0.82
+    },
+    "neural_inference": {
+      "mean_ms": 430.89,
+      "p95_ms": 1400.89
+    },
+    "foraging": {
+      "mean_ms": 1.69,
+      "p95_ms": 2.5
+    },
+    "learning": {
+      "mean_ms": 60.03,
+      "p95_ms": 65.93
+    },
+    "interactions": {
+      "mean_ms": 8.31
+    }
+  },
+  "memory": {
+    "initial_rss_gb": 0.119,
+    "warmup_rss_gb": 3.108,
+    "final_rss_gb": 3.099,
+    "peak_rss_gb": 3.109,
+    "rss_drift_gb": -0.009,
+    "peak_commit_gb": 3.686
+  },
+  "population": {
+    "initial_blobs": 2000,
+    "final_living": 2000,
+    "total_births": 0,
+    "total_deaths": 0,
+    "total_food_eaten": 1096.225,
+    "total_trades": 148,
+    "total_raids": 0
+  },
+  "assertions": {
+    "regular_tps_gt_30": false,
+    "all_ticks_mean_lt_40ms": false,
+    "peak_rss_lt_3_8_gb": true,
+    "memory_drift_lt_0_20_gb": true,
+    "population_viable": true,
+    "all_passed": false
+  },
+  "ticks": [
+    {
+      "tick": 1,
+      "duration_ms": 118.81,
+      "rss_gb": 3.108
+    },
+    {
+      "tick": 2,
+      "duration_ms": 105.47,
+      "rss_gb": 3.108
+    },
+    {
+      "tick": 3,
+      "duration_ms": 149.41,
+      "rss_gb": 3.108
+    },
+    {
+      "tick": 4,
+      "duration_ms": 112.2,
+      "rss_gb": 3.109
+    },
+    {
+      "tick": 5,
+      "duration_ms": 117.05,
+      "rss_gb": 3.109
+    },
+    {
+      "tick": 6,
+      "duration_ms": 1297.39,
+      "rss_gb": 3.092
+    },
+    {
+      "tick": 7,
+      "duration_ms": 116.37,
+      "rss_gb": 3.094
+    },
+    {
+      "tick": 8,
+      "duration_ms": 102.06,
+      "rss_gb": 3.094
+    },
+    {
+      "tick": 9,
+      "duration_ms": 1226.17,
+      "rss_gb": 3.094
+    },
+    {
+      "tick": 10,
+      "duration_ms": 109.37,
+      "rss_gb": 3.094
+    },
+    {
+      "tick": 11,
+      "duration_ms": 117.14,
+      "rss_gb": 3.094
+    },
+    {
+      "tick": 12,
+      "duration_ms": 1315.41,
+      "rss_gb": 3.094
+    },
+    {
+      "tick": 13,
+      "duration_ms": 120.9,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 14,
+      "duration_ms": 118.13,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 15,
+      "duration_ms": 1275.57,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 16,
+      "duration_ms": 114.31,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 17,
+      "duration_ms": 113.8,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 18,
+      "duration_ms": 1276.8,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 19,
+      "duration_ms": 120.64,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 20,
+      "duration_ms": 122.19,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 21,
+      "duration_ms": 1361.95,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 22,
+      "duration_ms": 125.65,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 23,
+      "duration_ms": 121.91,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 24,
+      "duration_ms": 1479.63,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 25,
+      "duration_ms": 123.92,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 26,
+      "duration_ms": 125.11,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 27,
+      "duration_ms": 1411.21,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 28,
+      "duration_ms": 131.27,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 29,
+      "duration_ms": 122.38,
+      "rss_gb": 3.095
+    },
+    {
+      "tick": 30,
+      "duration_ms": 1506.53,
+      "rss_gb": 3.097
+    },
+    {
+      "tick": 31,
+      "duration_ms": 127.85,
+      "rss_gb": 3.097
+    },
+    {
+      "tick": 32,
+      "duration_ms": 121.14,
+      "rss_gb": 3.097
+    },
+    {
+      "tick": 33,
+      "duration_ms": 1436.99,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 34,
+      "duration_ms": 118.27,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 35,
+      "duration_ms": 120.65,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 36,
+      "duration_ms": 1494.51,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 37,
+      "duration_ms": 124.48,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 38,
+      "duration_ms": 125.94,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 39,
+      "duration_ms": 1450.16,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 40,
+      "duration_ms": 117.39,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 41,
+      "duration_ms": 123.49,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 42,
+      "duration_ms": 1456.37,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 43,
+      "duration_ms": 117.82,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 44,
+      "duration_ms": 125.39,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 45,
+      "duration_ms": 1461.63,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 46,
+      "duration_ms": 122.94,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 47,
+      "duration_ms": 122.18,
+      "rss_gb": 3.098
+    },
+    {
+      "tick": 48,
+      "duration_ms": 1458.88,
+      "rss_gb": 3.099
+    },
+    {
+      "tick": 49,
+      "duration_ms": 125.92,
+      "rss_gb": 3.099
+    },
+    {
+      "tick": 50,
+      "duration_ms": 120.44,
+      "rss_gb": 3.099
+    }
+  ]
+}

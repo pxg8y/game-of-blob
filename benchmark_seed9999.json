@@ -1,0 +1,579 @@
+{
+  "timestamp": "2026-11-09T13:43:43Z",
+  "config": {
+    "blobs": 2000,
+    "neurons": 24,
+    "ticks": 100,
+    "preset": "continent",
+    "seed": 9999,
+    "warmup": 5,
+    "ticks_per_day": 600
+  },
+  "summary": {
+    "all_mean_tick_ms": 18.03,
+    "all_tps": 55.5,
+    "regular_mean_tick_ms": 18.03,
+    "regular_tps": 55.5,
+    "median_tick_ms": 17.45,
+    "p90_tick_ms": 22.46,
+    "p95_tick_ms": 23.23,
+    "p99_tick_ms": 24.91,
+    "min_tick_ms": 13.0,
+    "max_tick_ms": 26.18,
+    "peak_rss_gb": 0.149,
+    "rss_drift_gb": 0.001,
+    "all_contracts_passed": true
+  },
+  "subsystems": {
+    "kinematics": {
+      "mean_ms": 1.25,
+      "p95_ms": 1.73
+    },
+    "observation_prep": {
+      "mean_ms": 0.96,
+      "p95_ms": 1.39
+    },
+    "neural_inference": {
+      "mean_ms": 1.41,
+      "p95_ms": 2.11
+    },
+    "foraging": {
+      "mean_ms": 1.36,
+      "p95_ms": 2.83
+    },
+    "learning": {
+      "mean_ms": 1.43,
+      "p95_ms": 1.79
+    },
+    "interactions": {
+      "mean_ms": 11.63
+    }
+  },
+  "memory": {
+    "initial_rss_gb": 0.121,
+    "warmup_rss_gb": 0.149,
+    "final_rss_gb": 0.149,
+    "peak_rss_gb": 0.149,
+    "rss_drift_gb": 0.001,
+    "peak_commit_gb": 0.621
+  },
+  "population": {
+    "initial_blobs": 2000,
+    "final_living": 2000,
+    "total_births": 0,
+    "total_deaths": 0,
+    "total_food_eaten": 1087.741,
+    "total_trades": 1447,
+    "total_raids": 263
+  },
+  "assertions": {
+    "regular_tps_gt_30": true,
+    "all_ticks_mean_lt_40ms": true,
+    "peak_rss_lt_3_8_gb": true,
+    "memory_drift_lt_0_20_gb": true,
+    "population_viable": true,
+    "all_passed": true
+  },
+  "ticks": [
+    {
+      "tick": 1,
+      "duration_ms": 22.7,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 2,
+      "duration_ms": 23.36,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 3,
+      "duration_ms": 18.25,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 4,
+      "duration_ms": 23.22,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 5,
+      "duration_ms": 19.93,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 6,
+      "duration_ms": 21.71,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 7,
+      "duration_ms": 22.68,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 8,
+      "duration_ms": 21.85,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 9,
+      "duration_ms": 22.44,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 10,
+      "duration_ms": 22.7,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 11,
+      "duration_ms": 18.18,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 12,
+      "duration_ms": 19.76,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 13,
+      "duration_ms": 22.61,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 14,
+      "duration_ms": 18.14,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 15,
+      "duration_ms": 20.49,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 16,
+      "duration_ms": 18.04,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 17,
+      "duration_ms": 17.31,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 18,
+      "duration_ms": 13.0,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 19,
+      "duration_ms": 15.45,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 20,
+      "duration_ms": 15.99,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 21,
+      "duration_ms": 18.16,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 22,
+      "duration_ms": 17.39,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 23,
+      "duration_ms": 16.65,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 24,
+      "duration_ms": 15.39,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 25,
+      "duration_ms": 16.91,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 26,
+      "duration_ms": 14.32,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 27,
+      "duration_ms": 13.47,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 28,
+      "duration_ms": 17.16,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 29,
+      "duration_ms": 15.41,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 30,
+      "duration_ms": 17.9,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 31,
+      "duration_ms": 21.24,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 32,
+      "duration_ms": 17.05,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 33,
+      "duration_ms": 20.25,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 34,
+      "duration_ms": 16.7,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 35,
+      "duration_ms": 20.13,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 36,
+      "duration_ms": 17.38,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 37,
+      "duration_ms": 26.18,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 38,
+      "duration_ms": 19.93,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 39,
+      "duration_ms": 17.69,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 40,
+      "duration_ms": 19.65,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 41,
+      "duration_ms": 16.21,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 42,
+      "duration_ms": 18.66,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 43,
+      "duration_ms": 17.5,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 44,
+      "duration_ms": 15.61,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 45,
+      "duration_ms": 18.72,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 46,
+      "duration_ms": 18.1,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 47,
+      "duration_ms": 17.86,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 48,
+      "duration_ms": 17.88,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 49,
+      "duration_ms": 16.98,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 50,
+      "duration_ms": 18.09,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 51,
+      "duration_ms": 18.71,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 52,
+      "duration_ms": 24.9,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 53,
+      "duration_ms": 17.18,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 54,
+      "duration_ms": 16.54,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 55,
+      "duration_ms": 19.19,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 56,
+      "duration_ms": 14.4,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 57,
+      "duration_ms": 19.8,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 58,
+      "duration_ms": 18.15,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 59,
+      "duration_ms": 15.98,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 60,
+      "duration_ms": 16.67,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 61,
+      "duration_ms": 18.96,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 62,
+      "duration_ms": 17.14,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 63,
+      "duration_ms": 15.83,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 64,
+      "duration_ms": 20.71,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 65,
+      "duration_ms": 16.83,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 66,
+      "duration_ms": 19.88,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 67,
+      "duration_ms": 19.17,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 68,
+      "duration_ms": 20.04,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 69,
+      "duration_ms": 19.36,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 70,
+      "duration_ms": 23.57,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 71,
+      "duration_ms": 16.57,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 72,
+      "duration_ms": 17.07,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 73,
+      "duration_ms": 23.57,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 74,
+      "duration_ms": 14.42,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 75,
+      "duration_ms": 16.43,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 76,
+      "duration_ms": 17.32,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 77,
+      "duration_ms": 16.01,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 78,
+      "duration_ms": 16.74,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 79,
+      "duration_ms": 16.76,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 80,
+      "duration_ms": 18.13,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 81,
+      "duration_ms": 20.17,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 82,
+      "duration_ms": 16.64,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 83,
+      "duration_ms": 15.58,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 84,
+      "duration_ms": 14.7,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 85,
+      "duration_ms": 15.52,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 86,
+      "duration_ms": 15.53,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 87,
+      "duration_ms": 18.14,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 88,
+      "duration_ms": 19.21,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 89,
+      "duration_ms": 17.37,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 90,
+      "duration_ms": 14.47,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 91,
+      "duration_ms": 15.22,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 92,
+      "duration_ms": 16.19,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 93,
+      "duration_ms": 14.95,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 94,
+      "duration_ms": 15.72,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 95,
+      "duration_ms": 13.83,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 96,
+      "duration_ms": 20.41,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 97,
+      "duration_ms": 16.58,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 98,
+      "duration_ms": 13.94,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 99,
+      "duration_ms": 15.05,
+      "rss_gb": 0.149
+    },
+    {
+      "tick": 100,
+      "duration_ms": 15.64,
+      "rss_gb": 0.149
+    }
+  ]
+}

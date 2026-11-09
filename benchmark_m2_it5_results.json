@@ -1,0 +1,127 @@
+{
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "trials": [
+    {
+      "seed": 42,
+      "mean_tick_duration_ms": 25.201866992283612,
+      "median_tick_duration_ms": 22.662549861706793,
+      "p95_tick_duration_ms": 41.74165501026437,
+      "p99_tick_duration_ms": 83.27025206759595,
+      "min_tick_duration_ms": 15.783000038936734,
+      "max_tick_duration_ms": 127.10270006209612,
+      "mean_regular_tick_ms": 23.57404590916953,
+      "p95_regular_tick_ms": 31.43409508047623,
+      "mean_kinematics_ms": 2.8585400013253093,
+      "p95_kinematics_ms": 3.6451250314712524,
+      "mean_obs_prep_ms": 3.7692200019955635,
+      "p95_obs_prep_ms": 5.734995089005679,
+      "mean_neural_ms": 2.7440969948656857,
+      "mean_forage_ms": 1.463081007823348,
+      "mean_eval_ms": 0.0,
+      "midnight_resets": {
+        "40": 127.10270006209612,
+        "80": 82.82750006765127
+      }
+    },
+    {
+      "seed": 43,
+      "mean_tick_duration_ms": 27.53289999673143,
+      "median_tick_duration_ms": 25.457250070758164,
+      "p95_tick_duration_ms": 35.00386993400752,
+      "p99_tick_duration_ms": 88.4929600358012,
+      "min_tick_duration_ms": 16.811100067570806,
+      "max_tick_duration_ms": 141.20649988763034,
+      "mean_regular_tick_ms": 25.75635714028791,
+      "p95_regular_tick_ms": 33.944194985087954,
+      "mean_kinematics_ms": 3.1114440062083304,
+      "p95_kinematics_ms": 3.8314549252390857,
+      "mean_obs_prep_ms": 4.109882009215653,
+      "p95_obs_prep_ms": 5.580974975600838,
+      "mean_neural_ms": 2.393257007934153,
+      "mean_forage_ms": 1.6984780016355217,
+      "mean_eval_ms": 0.0,
+      "midnight_resets": {
+        "40": 141.20649988763034,
+        "80": 87.9605000372976
+      }
+    },
+    {
+      "seed": 44,
+      "mean_tick_duration_ms": 27.662759022787213,
+      "median_tick_duration_ms": 24.750149925239384,
+      "p95_tick_duration_ms": 46.15694502135738,
+      "p99_tick_duration_ms": 109.18907015584426,
+      "min_tick_duration_ms": 13.527499977499247,
+      "max_tick_duration_ms": 143.2322000619024,
+      "mean_regular_tick_ms": 25.65508675571455,
+      "p95_regular_tick_ms": 34.88460503285749,
+      "mean_kinematics_ms": 2.9871010198257864,
+      "p95_kinematics_ms": 3.7952552083879705,
+      "mean_obs_prep_ms": 4.132306012324989,
+      "p95_obs_prep_ms": 6.145905144512649,
+      "mean_neural_ms": 2.520124998409301,
+      "mean_forage_ms": 1.740010993089527,
+      "mean_eval_ms": 0.0,
+      "midnight_resets": {
+        "40": 143.2322000619024,
+        "80": 108.845200156793
+      }
+    },
+    {
+      "seed": 45,
+      "mean_tick_duration_ms": 27.26416900753975,
+      "median_tick_duration_ms": 23.955299984663725,
+      "p95_tick_duration_ms": 42.28588009718804,
+      "p99_tick_duration_ms": 85.97175017464926,
+      "min_tick_duration_ms": 14.281099895015359,
+      "max_tick_duration_ms": 124.9134000390768,
+      "mean_regular_tick_ms": 25.67270510753959,
+      "p95_regular_tick_ms": 40.97374500706791,
+      "mean_kinematics_ms": 3.104395014233887,
+      "p95_kinematics_ms": 3.832704946398735,
+      "mean_obs_prep_ms": 3.874593013897538,
+      "p95_obs_prep_ms": 5.182245094329118,
+      "mean_neural_ms": 2.339057014323771,
+      "mean_forage_ms": 1.819702999200672,
+      "mean_eval_ms": 0.0,
+      "midnight_resets": {
+        "40": 124.9134000390768,
+        "80": 85.57840017601848
+      }
+    },
+    {
+      "seed": 46,
+      "mean_tick_duration_ms": 33.207584999036044,
+      "median_tick_duration_ms": 28.133950079791248,
+      "p95_tick_duration_ms": 47.04788519302382,
+      "p99_tick_duration_ms": 124.86022589728242,
+      "min_tick_duration_ms": 18.05779989808798,
+      "max_tick_duration_ms": 136.58439996652305,
+      "mean_regular_tick_ms": 31.21869693918876,
+      "p95_regular_tick_ms": 46.16656511789188,
+      "mean_kinematics_ms": 3.596029009204358,
+      "p95_kinematics_ms": 6.139125011395661,
+      "mean_obs_prep_ms": 4.613555986434221,
+      "p95_obs_prep_ms": 8.726445073261857,
+      "mean_neural_ms": 3.5571240028366446,
+      "mean_forage_ms": 2.256000975612551,
+      "mean_eval_ms": 0.0,
+      "midnight_resets": {
+        "40": 136.58439996652305,
+        "80": 124.74179989658296
+      }
+    }
+  ],
+  "grand_mean_tick_ms": 28.17385600367561,
+  "grand_mean_regular_tick_ms": 26.375378370380066,
+  "grand_p95_tick_ms": 42.44724705116823,
+  "grand_mean_kinematics_ms": 3.131501810159534,
+  "grand_mean_obs_prep_ms": 4.099911404773593,
+  "total_wall_time_s": 19.619133700150996
+}
