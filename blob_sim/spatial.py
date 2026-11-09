@@ -400,7 +400,7 @@ def compute_oasis_and_feelers_numba(
 
     oasis_weights = np.empty(n_oases, dtype=np.float32)
     for o_idx in range(n_oases):
-        oasis_weights[o_idx] = (ofert[o_idx] ** np.float32(1.75)) * oring_bonus[o_idx]
+        oasis_weights[o_idx] = (ofert[o_idx] ** np.float32(1.5)) * oring_bonus[o_idx]
 
     for i in prange(n_blobs):
         bx = blob_xs[i]
@@ -423,7 +423,7 @@ def compute_oasis_and_feelers_numba(
                     if lf > local_fert:
                         local_fert = lf
 
-                score = oasis_weights[o_idx] / (odist + np.float32(220.0))
+                score = oasis_weights[o_idx] / (odist + np.float32(120.0))
                 if score > best_score:
                     best_score = score
                     best_dox = dox

@@ -77,6 +77,25 @@ START_PARADIGMS: Dict[str, Dict[str, Any]] = {
 
 
 WORLD_SCALE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "training_kindergarten": {
+        "id": "training_kindergarten",
+        "label": "🌱 Kindergarten · Perfekte Trainings-Arena (4.800×3.600)",
+        "short_desc": "Hindernisfreie Starter-Wiege mit 4 resilienten Oasen, 3.2x Nahrungsüberschuss, 1.350 Ticks Hunger-Puffer und weiten Übergangspässen für optimales RL-Lernen ohne Frühaussterben.",
+        "width": 4800.0,
+        "height": 3600.0,
+        "num_cradles": 1,
+        "initial_blobs": 100,
+        "daily_food_spawn": 320,
+        "max_population_cap": 1500,
+        "max_homes_cap": 120,
+        "max_groups_cap": 24,
+        "num_oases": 12,
+        "num_rock_formations": 16,
+        "num_swamps": 4,
+        "min_population_floor": 24,
+        "daylight_ratio": 0.74,
+        "max_starvation_ticks": 1350,
+    },
     "classic": {
         "id": "classic",
         "label": "🏝️ Klassisch · Trainings-Arena (4.800×3.600)",
@@ -172,6 +191,10 @@ class WorldConfig:
         self.num_rock_formations = int(preset["num_rock_formations"])
         self.num_swamps = int(preset["num_swamps"])
         self.min_population_floor = int(preset["min_population_floor"])
+        if "daylight_ratio" in preset:
+            self.daylight_ratio = float(preset["daylight_ratio"])
+        if "max_starvation_ticks" in preset:
+            self.max_starvation_ticks = int(preset["max_starvation_ticks"])
 
     @classmethod
     def from_preset(cls, preset_id: str = "continent", **overrides: Any) -> "WorldConfig":

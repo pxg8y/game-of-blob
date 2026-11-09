@@ -42,16 +42,26 @@ class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
 
 
 def _get_process_rss_gb() -> float:
-    fn = ctypes.windll.psapi.GetProcessMemoryInfo
-    fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESS_MEMORY_COUNTERS), wintypes.DWORD]
-    fn.restype = wintypes.BOOL
-    h = ctypes.windll.kernel32.GetCurrentProcess()
-    pmc = _PROCESS_MEMORY_COUNTERS()
-    pmc.cb = ctypes.sizeof(_PROCESS_MEMORY_COUNTERS)
-    res = fn(h, ctypes.byref(pmc), pmc.cb)
-    if not res:
-        return 0.0
-    return float(pmc.WorkingSetSize) / (1024.0 ** 3)
+    if hasattr(ctypes, "windll"):
+        fn = ctypes.windll.psapi.GetProcessMemoryInfo
+        fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESS_MEMORY_COUNTERS), wintypes.DWORD]
+        fn.restype = wintypes.BOOL
+        h = ctypes.windll.kernel32.GetCurrentProcess()
+        pmc = _PROCESS_MEMORY_COUNTERS()
+        pmc.cb = ctypes.sizeof(_PROCESS_MEMORY_COUNTERS)
+        res = fn(h, ctypes.byref(pmc), pmc.cb)
+        if not res:
+            return 0.0
+        return float(pmc.WorkingSetSize) / (1024.0 ** 3)
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / (1024.0 * 1024.0)
+    except Exception:
+        pass
+    import resource
+    return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / (1024.0 * 1024.0)
 
 
 class TestChallengerM2It6MultiSeedContinentalBenchmark(unittest.TestCase):
