@@ -985,11 +985,179 @@ class SimulationWorld:
 
         self._rebuild_obstacle_arrays()
 
+    def _generate_kindergarten_topography(self) -> None:
+        """
+        Generate the Perfect Basic Training Map ('Kindergarten Arena'):
+        - Zone 0: The Central Nursery Sanctuary (0 <= r < 850):
+          Completely flat, smooth ground. Zero rocks, zero swamps.
+          4 balanced nursery oases in a cross/diamond pattern:
+          North: (cx, cy - 320), South: (cx, cy + 320),
+          East: (cx + 380, cy), West: (cx - 380, cy).
+          depletion_rate=0.85, recovery_rate=0.65, max_capacity=80.
+        - Zone 1: Transition Ring (850 <= r < 1600):
+          8 radial convex boulders (rounded pillars, length 80, width 40, radius 20).
+          Minimum clearance between any two obstacles > 320 units.
+          4 open radial food spokes along cardinal axes.
+        - Zone 2: Frontier Biomes (1600 <= r < 2400):
+          4 Golden Groves in diagonal quadrants (NE, NW, SE, SW; rich golden cluster chance).
+          4 Thermal Springs on outer perimeter (cold resilience).
+          4 small mud swamps (r=85) off-axis.
+        """
+        W, H = self.world_cfg.width, self.world_cfg.height
+        cx, cy = W * 0.5, H * 0.5
+        paradigm = self.get_active_paradigm()
+        cradle_fert = float(paradigm.get("cradle_fertility", 1.0))
+        if paradigm["id"] == "curriculum":
+            cradle_fert = 1.0  # Lush kindergarten baseline
+        init_pressure = 2.1 if paradigm["id"] == "rapid_exodus" else 0.0
+
+        self.map_zones = [
+            {
+                "id": "cradle",
+                "name": "ZONE 0 · SANCTUARY (Kindergarten Basin)",
+                "cx": round(cx, 1),
+                "cy": round(cy, 1),
+                "rx": 850.0,
+                "ry": 850.0,
+            },
+            {
+                "id": "canyon",
+                "name": "ZONE 1 · TRANSITION RING (Convex Guideposts)",
+                "cx": round(cx, 1),
+                "cy": round(cy, 1),
+                "rx": 1600.0,
+                "ry": 1600.0,
+            },
+            {
+                "id": "frontier",
+                "name": "ZONE 2 · FRONTIER BIOMES (Golden Groves & Thermal Springs)",
+                "cx": round(cx, 1),
+                "cy": round(cy, 1),
+                "rx": 2400.0,
+                "ry": 1800.0,
+            },
+        ]
+        self.skill_gates = []
+        self.cradle_centers = [(cx, cy, 850.0, 850.0)]
+
+        # 1. ZONE 0: 4 Inner Sanctuary Oases in Cross/Diamond Pattern
+        inner_oasis_specs = [
+            ("Wiegen-Quell Nord", cx, cy - 320.0),
+            ("Wiegen-Quell Süd", cx, cy + 320.0),
+            ("Wiegen-Quell Ost", cx + 380.0, cy),
+            ("Wiegen-Quell West", cx - 380.0, cy),
+        ]
+        for name, ox, oy in inner_oasis_specs:
+            oid = self._next_oasis_id
+            self._next_oasis_id += 1
+            rad = 220.0
+            self.oases[oid] = OasisNode(
+                id=oid,
+                name=name,
+                x=float(ox),
+                y=float(oy),
+                radius=rad,
+                fertility=cradle_fert,
+                max_capacity=80,
+                harvest_pressure=init_pressure,
+                biome="cradle",
+                ring="inner",
+                depletion_rate=0.85,
+                recovery_rate=0.65,
+                cradle_id=1,
+            )
+
+        # 2. ZONE 1: 8 Radial Convex Boulder Guideposts along r = 1250 with >320 unit clearance
+        # Placed at angles offset by pi/8 from cardinal directions to keep cardinal spokes wide open!
+        r_boulder = 1250.0
+        for i in range(8):
+            ang = (math.pi / 8.0) + (i * 2.0 * math.pi / 8.0)
+            bx = cx + math.cos(ang) * r_boulder
+            by = cy + math.sin(ang) * r_boulder
+            # Tangential pillar (length 80, thickness 40 -> radius 20)
+            tx = -math.sin(ang)
+            ty = math.cos(ang)
+            half_len = 40.0
+            self._add_obstacle(
+                "rock",
+                bx - tx * half_len,
+                by - ty * half_len,
+                bx + tx * half_len,
+                by + ty * half_len,
+                20.0,
+                gate_kind="guidepost",
+            )
+            self.skill_gates.append(
+                {
+                    "kind": "guidepost",
+                    "label": f"Fels-Leitpfosten #{i + 1}",
+                    "x": round(bx, 1),
+                    "y": round(by, 1),
+                }
+            )
+
+        # 3. ZONE 2: 4 Golden Groves (diagonal quadrants) + 4 Thermal Springs (outer perimeter)
+        frontier_specs = [
+            # 4 Golden Groves in diagonal quadrants
+            ("gold_grove", "Sonnen-Hain NE", cx + 1400.0, cy - 1000.0, 250.0),
+            ("gold_grove", "Bernstein-Hain NW", cx - 1400.0, cy - 1000.0, 250.0),
+            ("gold_grove", "Gold-Lagune SE", cx + 1400.0, cy + 1000.0, 250.0),
+            ("gold_grove", "Sternen-Hain SW", cx - 1400.0, cy + 1000.0, 250.0),
+            # 4 Thermal Springs on cardinal perimeters
+            ("thermal_spring", "Smaragd-Therme Nord", cx, cy - 1380.0, 240.0),
+            ("thermal_spring", "Kristall-Geysir Süd", cx, cy + 1380.0, 240.0),
+            ("thermal_spring", "Jade-Quell Ost", cx + 1850.0, cy, 240.0),
+            ("thermal_spring", "Nebel-Therme West", cx - 1850.0, cy, 240.0),
+        ]
+
+        for b_kind, o_name, ox, oy, rad in frontier_specs:
+            oid = self._next_oasis_id
+            self._next_oasis_id += 1
+            cap = 110 if b_kind == "gold_grove" else 95
+            self.oases[oid] = OasisNode(
+                id=oid,
+                name=o_name,
+                x=float(np.clip(ox, rad + 40.0, W - rad - 40.0)),
+                y=float(np.clip(oy, rad + 40.0, H - rad - 40.0)),
+                radius=rad,
+                fertility=1.0,
+                max_capacity=cap,
+                biome=b_kind,
+                ring="outer",
+                depletion_rate=0.72,
+                recovery_rate=1.22,
+                cradle_id=0,
+            )
+
+        # 4. ZONE 2 Hazards: 4 small mud swamps (radius 85) positioned off-axis in outer frontier
+        swamp_offsets = [
+            (cx + 950.0, cy - 1200.0),
+            (cx - 950.0, cy - 1200.0),
+            (cx + 950.0, cy + 1200.0),
+            (cx - 950.0, cy + 1200.0),
+        ]
+        for sx_mid, sy_mid in swamp_offsets:
+            self._add_obstacle(
+                "swamp",
+                sx_mid - 25.0,
+                sy_mid - 20.0,
+                sx_mid + 25.0,
+                sy_mid + 20.0,
+                65.0,
+                gate_kind="outer_swamp",
+            )
+
+        self._rebuild_obstacle_arrays()
+
     def _generate_world_topography(self) -> None:
         """
         Generate the Concentric Evolutionary Training Map ('Cradle-to-Frontier') for single-cradle maps,
         or the Multi-Cradle Continental Region Network when `num_cradles > 1`.
         """
+        if getattr(self.world_cfg, "scale_preset", "") == "training_kindergarten":
+            self._generate_kindergarten_topography()
+            return
+
         num_cradles = max(1, int(getattr(self.world_cfg, "num_cradles", 1)))
         if num_cradles > 1:
             self._generate_multi_cradle_topography(num_cradles)
@@ -1461,6 +1629,23 @@ class SimulationWorld:
         else:
             weights /= w_sum
 
+        # In kindergarten training arena: ensure at least 65% of daily food spawns inside Zone 0 during initial days / when pop < 150
+        is_kindergarten = getattr(self.world_cfg, "scale_preset", "") == "training_kindergarten"
+        living_pop = len([b for b in self.blobs if b.alive])
+        if is_kindergarten and (self.day_number <= 3 or living_pop < 150):
+            inner_indices = [idx for idx, o in enumerate(oasis_list) if o.ring == "inner"]
+            outer_indices = [idx for idx, o in enumerate(oasis_list) if o.ring != "inner"]
+            if inner_indices and outer_indices:
+                w_inner_sum = float(np.sum(weights[inner_indices]))
+                w_outer_sum = float(np.sum(weights[outer_indices]))
+                if w_inner_sum > 0.0 and w_outer_sum > 0.0:
+                    weights[inner_indices] = (weights[inner_indices] / w_inner_sum) * 0.68
+                    weights[outer_indices] = (weights[outer_indices] / w_outer_sum) * 0.32
+                elif w_inner_sum > 0.0:
+                    weights[inner_indices] = 1.0 / len(inner_indices)
+                    weights[outer_indices] = 0.0
+                weights /= float(np.sum(weights))
+
         chosen_indices = self.rng.choice(n_oases, size=to_spawn, p=weights)
         angles = self.rng.uniform(0.0, 2.0 * math.pi, size=to_spawn).astype(np.float32)
         r_fracs = np.sqrt(self.rng.uniform(0.02, 0.88, size=to_spawn)).astype(np.float32)
@@ -1526,14 +1711,20 @@ class SimulationWorld:
                 oasis_counts[f.oasis_id] += 1
 
         season_id, _slabel, wild_mult, _gold, _cold = self.season_info
+        is_kindergarten = getattr(self.world_cfg, "scale_preset", "") == "training_kindergarten"
+        hp_threshold = 6.0 if is_kindergarten else 2.2
         for oid, o in self.oases.items():
             o.current_food_count = oasis_counts[oid]
-            # Decay harvest pressure (slower decay in fragile Cradle oases)
-            decay = 0.72 if o.ring == "inner" else 0.58
+            # Decay harvest pressure
+            decay = (0.42 if is_kindergarten else 0.72) if o.ring == "inner" else 0.58
             o.harvest_pressure *= decay
             eff_season_rec = 1.15 if (o.biome == "thermal_spring" and season_id == "winter") else wild_mult
-            if o.harvest_pressure < 2.2:
-                base_rec = 0.075 * eff_season_rec if o.harvest_pressure < 0.8 else 0.038 * eff_season_rec
+            if is_kindergarten and o.ring == "inner" and self.day_number <= 5:
+                # Epoch 1 (Nursery Phase): Cradle oases are highly resilient, maintaining lush conditions
+                recovery = 0.12 * o.recovery_rate
+                o.fertility = round(min(1.0, max(0.68, o.fertility + recovery)), 3)
+            elif o.harvest_pressure < hp_threshold:
+                base_rec = 0.075 * eff_season_rec if o.harvest_pressure < (hp_threshold * 0.4) else 0.038 * eff_season_rec
                 recovery = base_rec * o.recovery_rate
                 o.fertility = round(min(1.0, o.fertility + recovery), 3)
             else:
@@ -3294,8 +3485,12 @@ class SimulationWorld:
                 if food.oasis_id is not None and food.oasis_id in self.oases:
                     oasis = self.oases[food.oasis_id]
                     dep_mult = float(getattr(oasis, "depletion_rate", 1.0))
-                    oasis.harvest_pressure += 0.65 * dep_mult
-                    oasis.fertility = round(max(0.06, oasis.fertility - 0.012 * dep_mult), 3)
+                    is_kg = getattr(self.world_cfg, "scale_preset", "") == "training_kindergarten"
+                    hp_add = (0.20 if (is_kg and self.day_number <= 5) else 0.65) * dep_mult
+                    oasis.harvest_pressure += hp_add
+                    fert_drop = (0.003 if (is_kg and self.day_number <= 5) else 0.012) * dep_mult
+                    min_floor = 0.68 if (is_kg and oasis.ring == "inner" and self.day_number <= 5) else 0.06
+                    oasis.fertility = round(max(min_floor, oasis.fertility - fert_drop), 3)
                     oasis.current_food_count = max(0, oasis.current_food_count - 1)
                     blob.memory_x = oasis.x
                     blob.memory_y = oasis.y
@@ -4318,7 +4513,9 @@ class SimulationWorld:
             blob.ticks_since_last_meal = 0
         else:
             remaining_deficit = survival_need - blob.food_today
-            outdoor_penalty = 0.0 if blob.is_at_home else 8.0
+            is_kindergarten = getattr(self.world_cfg, "scale_preset", "") == "training_kindergarten"
+            base_outdoor = 2.5 if (is_kindergarten or self.day_number <= 3) else 8.0
+            outdoor_penalty = 0.0 if blob.is_at_home else base_outdoor
             blob.energy -= 32.0 * (remaining_deficit / max(0.1, survival_need)) + outdoor_penalty
 
     def _apply_overnight_carryover_and_repro(
