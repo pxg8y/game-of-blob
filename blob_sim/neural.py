@@ -197,6 +197,8 @@ class BlobBrain:
             np.zeros((dim,), dtype=np.float32) for dim in self.layer_dims
         ]
         self.reward_baseline: float = 0.0
+        self.reward_baseline_dense: float = 0.0
+        self.reward_baseline_event: float = 0.0
 
     def _sync_from_pool(self) -> None:
         if self._pool_ref is not None:
@@ -240,8 +242,8 @@ class BlobBrain:
             self.last_activations.append(a)
 
         # Backpropagate output sensitivity delta across layers for structurally valid credit assignment
-        decay = np.float32(0.82)
-        one_minus_decay = np.float32(0.18)
+        decay = np.float32(0.95)
+        one_minus_decay = np.float32(0.05)
         out_act = self.last_activations[-1]
         delta = out_act * np.maximum(np.float32(0.15), _F32_ONE - out_act * out_act)
         tw_list = self.traces_w
@@ -272,19 +274,34 @@ class BlobBrain:
             return
 
         r = float(reward)
-        # Always decay reward_baseline even on zero-reward ticks so baseline doesn't ratchet up
-        prev_baseline = self.reward_baseline
-        self.reward_baseline = 0.96 * self.reward_baseline + 0.04 * r
+        # Decouple dense movement shaping from sparse discrete events
+        is_dense = abs(r) <= 0.35
+        if abs(r) < 1e-6:
+            # On zero ticks, decay both baselines
+            self.reward_baseline_dense *= 0.96
+            self.reward_baseline_event *= 0.96
+            self.reward_baseline = self.reward_baseline_dense + self.reward_baseline_event
+            return
+        elif is_dense:
+            prev_b = self.reward_baseline_dense
+            self.reward_baseline_dense = 0.98 * prev_b + 0.02 * r
+            self.reward_baseline_event *= 0.98
+            cur_baseline = prev_b
+        else:
+            prev_b = self.reward_baseline_event
+            self.reward_baseline_event = 0.90 * prev_b + 0.10 * r
+            self.reward_baseline_dense *= 0.98
+            cur_baseline = prev_b
+        self.reward_baseline = self.reward_baseline_dense + self.reward_baseline_event
 
         if abs(r) < 1e-6:
             return
 
-        # Prevent positive shaping rewards from being inverted into punishments when baseline spiked
         if r > 0.0:
-            raw_adv = max(0.25 * r, r - prev_baseline)
+            raw_adv = max(0.25 * r, r - cur_baseline)
             advantage = min(2.5, max(0.0, raw_adv))
         else:
-            raw_adv = min(r, r - prev_baseline)
+            raw_adv = min(r, r - cur_baseline)
             advantage = max(-2.5, min(0.0, raw_adv))
 
         step = np.float32(learning_rate * advantage * 0.18)
@@ -575,14 +592,27 @@ class BatchedBrainPool:
         if slot is None or learning_rate <= 0.0:
             return
         r = float(reward)
-        prev_baseline = brain.reward_baseline
-        brain.reward_baseline = 0.96 * prev_baseline + 0.04 * r
         if abs(r) < 1e-6:
+            brain.reward_baseline_dense = getattr(brain, "reward_baseline_dense", 0.0) * 0.96
+            brain.reward_baseline_event = getattr(brain, "reward_baseline_event", 0.0) * 0.96
+            brain.reward_baseline = brain.reward_baseline_dense + brain.reward_baseline_event
             return
-        if r > 0.0:
-            advantage = min(2.5, max(0.0, 0.25 * r, r - prev_baseline))
+        is_dense = abs(r) <= 0.35
+        if is_dense:
+            prev_b = getattr(brain, "reward_baseline_dense", 0.0)
+            brain.reward_baseline_dense = 0.98 * prev_b + 0.02 * r
+            brain.reward_baseline_event = getattr(brain, "reward_baseline_event", 0.0) * 0.98
+            cur_baseline = prev_b
         else:
-            advantage = max(-2.5, min(0.0, r, r - prev_baseline))
+            prev_b = getattr(brain, "reward_baseline_event", 0.0)
+            brain.reward_baseline_event = 0.90 * prev_b + 0.10 * r
+            brain.reward_baseline_dense = getattr(brain, "reward_baseline_dense", 0.0) * 0.98
+            cur_baseline = prev_b
+        brain.reward_baseline = brain.reward_baseline_dense + brain.reward_baseline_event
+        if r > 0.0:
+            advantage = min(2.5, max(0.0, 0.25 * r, r - cur_baseline))
+        else:
+            advantage = max(-2.5, min(0.0, r, r - cur_baseline))
         step = np.float32(learning_rate * advantage * 0.18)
         half_step = np.float32(step * 0.5)
         active_k = self._ring_ptr
@@ -904,8 +934,8 @@ class BatchedBrainPool:
         else:
             k = max(0, self._ring_ptr - 1)
 
-        decay = np.float32(0.75)
-        one_minus_decay = np.float32(0.25)
+        decay = np.float32(0.95)
+        one_minus_decay = np.float32(0.05)
         sl = cohort_slice if cohort_slice is not None else slice(0, n)
 
         if k > 0:
@@ -1148,10 +1178,28 @@ class BatchedBrainPool:
             return
         self.bind(brains)
         n = len(brains)
-        prev_b = np.fromiter((br.reward_baseline for br in brains), dtype=np.float32, count=n)
-        new_b = np.float32(0.96) * prev_b + np.float32(0.04) * rewards
+        zero_mask = np.abs(rewards) < 1e-6
+        dense_mask = np.abs(rewards) <= 0.35
+        prev_dense = np.fromiter((getattr(br, "reward_baseline_dense", 0.0) for br in brains), dtype=np.float32, count=n)
+        prev_event = np.fromiter((getattr(br, "reward_baseline_event", 0.0) for br in brains), dtype=np.float32, count=n)
+
+        new_dense = np.where(
+            zero_mask,
+            np.float32(0.96) * prev_dense,
+            np.where(dense_mask, np.float32(0.98) * prev_dense + np.float32(0.02) * rewards, np.float32(0.98) * prev_dense),
+        )
+        new_event = np.where(
+            zero_mask,
+            np.float32(0.96) * prev_event,
+            np.where(~dense_mask, np.float32(0.90) * prev_event + np.float32(0.10) * rewards, np.float32(0.98) * prev_event),
+        )
+
         for i, br in enumerate(brains):
-            br.reward_baseline = float(new_b[i])
+            br.reward_baseline_dense = float(new_dense[i])
+            br.reward_baseline_event = float(new_event[i])
+            br.reward_baseline = float(new_dense[i] + new_event[i])
+
+        baseline_for_adv = np.where(dense_mask, prev_dense, prev_event)
 
         pos_mask = rewards > 1e-6
         neg_mask = rewards < -1e-6
@@ -1162,10 +1210,10 @@ class BatchedBrainPool:
 
         adv = np.zeros_like(rewards, dtype=np.float32)
         if np.any(pos_mask):
-            raw_pos = np.maximum(np.float32(0.25) * rewards, rewards - prev_b)
+            raw_pos = np.maximum(np.float32(0.25) * rewards, rewards - baseline_for_adv)
             adv[pos_mask] = _umath_clip(raw_pos[pos_mask], _F32_ZERO, np.float32(2.5))
         if np.any(neg_mask):
-            raw_neg = np.minimum(rewards, rewards - prev_b)
+            raw_neg = np.minimum(rewards, rewards - baseline_for_adv)
             adv[neg_mask] = _umath_clip(raw_neg[neg_mask], np.float32(-2.5), _F32_ZERO)
 
         steps = np.float32(learning_rate * 0.18) * adv
