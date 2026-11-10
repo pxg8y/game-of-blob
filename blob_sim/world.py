@@ -2437,10 +2437,13 @@ class SimulationWorld:
         dy_home: float,
         tod: float,
         repro_target: float,
+        vx: float = 0.0,
+        vy: float = 0.0,
+        max_speed: float = 1.0,
     ) -> float:
         """
         Reward intelligent foraging & navigation (NO blind straight-line speed reward!):
-        - Reward approaching visible food items.
+        - Reward approaching visible food items based on kinematic velocity & intended action.
         - When no food is immediately visible, reward following Oasis Scent / Memory toward fertile oases.
         - Penalize lingering in overgrazed barren nurseries when hungry.
         - Penalize wading through energy-draining swamps when avoidable.
@@ -2450,16 +2453,21 @@ class SimulationWorld:
         if blob.in_swamp:
             reward -= 0.018
 
+        # Blend kinematic velocity with action direction for physical progress & coasting reward
+        inv_spd = 1.0 / max(1e-4, max_speed)
+        eff_vx = 0.5 * move_x + 0.5 * (vx * inv_spd)
+        eff_vy = 0.5 * move_y + 0.5 * (vy * inv_spd)
+
         if blob.food_today < repro_target:
             if prox_food > 0.0:
-                approach = move_x * dx_food + move_y * dy_food
+                approach = eff_vx * dx_food + eff_vy * dy_food
                 if approach > 0.0:
-                    reward += self.prefs.pref_exploration * 0.068 * approach
+                    reward += self.prefs.pref_food * 0.068 * approach
             else:
                 if local_fertility < -0.35:
                     reward -= 0.008 * self.prefs.pref_exploration
                 if local_fertility < 0.25:
-                    oasis_align = move_x * dx_oasis + move_y * dy_oasis
+                    oasis_align = eff_vx * dx_oasis + eff_vy * dy_oasis
                     if oasis_align > 0.0:
                         reward += self.prefs.pref_exploration * 0.052 * oasis_align
 
@@ -2467,7 +2475,7 @@ class SimulationWorld:
             if blob.is_at_home:
                 reward += self.prefs.pref_home * 0.038
             else:
-                home_align = move_x * dx_home + move_y * dy_home
+                home_align = eff_vx * dx_home + eff_vy * dy_home
                 if home_align > 0.0:
                     reward += self.prefs.pref_home * 0.058 * home_align
         return reward
@@ -2486,6 +2494,9 @@ class SimulationWorld:
         dy_homes: np.ndarray,
         tod: float,
         repro_target: float,
+        vxs: Optional[np.ndarray] = None,
+        vys: Optional[np.ndarray] = None,
+        max_speeds: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Vectorized computation of movement shaping rewards across all living blobs."""
         pref_exp = self.prefs.pref_exploration
@@ -2494,6 +2505,14 @@ class SimulationWorld:
         move_x = actions_batch[:, 0]
         move_y = actions_batch[:, 1]
 
+        if vxs is not None and vys is not None and max_speeds is not None:
+            inv_speed = 1.0 / np.maximum(1e-4, max_speeds)
+            eff_vx = 0.5 * move_x + 0.5 * (vxs * inv_speed)
+            eff_vy = 0.5 * move_y + 0.5 * (vys * inv_speed)
+        else:
+            eff_vx = move_x
+            eff_vy = move_y
+
         # Swamp traversal penalty
         reward = np.where(in_swamps, -0.018, 0.0)
 
@@ -2501,11 +2520,11 @@ class SimulationWorld:
         hungry = foods_today < repro_target
         has_food = prox_food > 0.0
 
-        approach = np.maximum(0.0, move_x * dx_foods + move_y * dy_foods)
-        food_reward = (pref_exp * 0.068) * approach
+        approach = np.maximum(0.0, eff_vx * dx_foods + eff_vy * dy_foods)
+        food_reward = (self.prefs.pref_food * 0.068) * approach
 
         local_fertility = oasis_vecs[:, 2]
-        oasis_align = np.maximum(0.0, move_x * oasis_vecs[:, 0] + move_y * oasis_vecs[:, 1])
+        oasis_align = np.maximum(0.0, eff_vx * oasis_vecs[:, 0] + eff_vy * oasis_vecs[:, 1])
         oasis_reward = np.where(local_fertility < 0.25, pref_exp * 0.052 * oasis_align, 0.0)
         barren_penalty = np.where(local_fertility < -0.35, -0.008 * pref_exp, 0.0)
         oasis_reward += barren_penalty
@@ -2514,7 +2533,7 @@ class SimulationWorld:
 
         # Evening return or sated return home
         heading_home = (tod >= 0.60) | (~hungry)
-        home_align = np.maximum(0.0, move_x * dx_homes + move_y * dy_homes)
+        home_align = np.maximum(0.0, eff_vx * dx_homes + eff_vy * dy_homes)
         home_reward = np.where(is_at_homes, pref_home * 0.038, pref_home * 0.058 * home_align)
         reward += np.where(heading_home, home_reward, 0.0)
 
@@ -2663,6 +2682,9 @@ class SimulationWorld:
             dy_home,
             tod,
             repro_target,
+            vx=blob.vx,
+            vy=blob.vy,
+            max_speed=blob.max_speed,
         )
 
         if blob.colonize_cooldown == 0 and (blob.colonize_desire > 0.06 or tod >= 0.54):
@@ -2720,7 +2742,6 @@ class SimulationWorld:
                         self.telemetry.on_emergency_ration_buy(blob, depot_home, 0.4, cost)
                         continue
 
-            blob.brain.apply_online_learning(-1.2 * self.prefs.pref_food, self.prefs.learning_rate)
             self._kill_blob(blob, reason="verhungert (Energie leer)")
 
     def _modulate_context_vectors(
@@ -3201,6 +3222,9 @@ class SimulationWorld:
             dy_homes,
             tod,
             repro_target,
+            vxs=self._kin_vxs[:n_living],
+            vys=self._kin_vys[:n_living],
+            max_speeds=self._kin_max_speeds[:n_living],
         )
         scaled_reward_vec = base_rewards * dt_scale
         step_rewards = (scaled_reward_vec * 2.5).astype(np.float32)
@@ -3286,9 +3310,9 @@ class SimulationWorld:
                 p.social_desire = float(actions_batch[j, 4])
                 if self._handle_social_encounter(blob, p):
                     bonus = self.prefs.pref_social * 0.45
-                    blob.last_reward += bonus * dt_scale
-                    blob.cumulative_reward += bonus * dt_scale
-                    step_rewards[i] += bonus * (dt_scale * 2.5)
+                    blob.last_reward += bonus
+                    blob.cumulative_reward += bonus
+                    step_rewards[i] += bonus * 2.5
 
             traded = False
             if (kind & 2):
@@ -3363,7 +3387,8 @@ class SimulationWorld:
 
         for idx in range(n_living):
             if living_blobs[idx].pending_rl_reward != 0.0:
-                step_rewards[idx] += living_blobs[idx].pending_rl_reward
+                # Scale discrete event reward uniformly by 2.5x to match movement shaping reward learning scale
+                step_rewards[idx] += living_blobs[idx].pending_rl_reward * 2.5
                 living_blobs[idx].pending_rl_reward = 0.0
 
         if do_trace or np.any(step_rewards > 0.25) or np.any(step_rewards < -0.25):
@@ -4288,7 +4313,7 @@ class SimulationWorld:
 
             aggressor.cumulative_reward += raid_rew
             aggressor.pending_rl_reward += raid_rew
-            defender.pending_rl_reward -= 0.25 * self.prefs.pref_home
+            defender.energy = max(5.0, defender.energy - 10.0)
 
             self.recent_raid_lines.append(
                 {
@@ -4534,8 +4559,6 @@ class SimulationWorld:
         new_babies: List[Blob],
     ) -> None:
         if blob.food_today >= repro_need - 1e-5:
-            repro_reward = self.prefs.pref_food * 1.4
-            blob.cumulative_reward += repro_reward
             max_pop_cap = getattr(self.world_cfg, "max_population_cap", 20000)
             max_carrying_pop = min(max_pop_cap, max(250, int(self.world_cfg.daily_food_spawn * 1.15)))
             cur_total = len(self.blobs) + len(new_babies)
@@ -4742,6 +4765,7 @@ class SimulationWorld:
             elif blob.food_today >= repro_need - 1e-5:
                 rew += repro_rew
             eod_rewards[idx] = rew
+            blob.cumulative_reward += rew
 
         for grp in self.groups.values():
             grp.rep_dirty = True
