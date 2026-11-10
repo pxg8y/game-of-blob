@@ -176,6 +176,7 @@ class WorldConfig:
     max_homes_cap: int = 120        # Max settlement & pioneer houses
     max_groups_cap: int = 120       # Max concurrent factions/empires (50-100+)
     every_tick_brain: bool = False  # Full 100% population evaluation & online RL trace update every single tick
+    egocentric_frame: bool = False  # Local body-frame sensor rotation & differential drive kinematics
 
     def apply_scale_preset(self, preset_id: str) -> None:
         preset = WORLD_SCALE_PRESETS.get(preset_id, WORLD_SCALE_PRESETS["continent"])
@@ -193,6 +194,7 @@ class WorldConfig:
         self.num_swamps = int(preset["num_swamps"])
         self.min_population_floor = int(preset["min_population_floor"])
         self.every_tick_brain = bool(preset.get("every_tick_brain", False))
+        self.egocentric_frame = bool(preset.get("egocentric_frame", False))
         if "daylight_ratio" in preset:
             self.daylight_ratio = float(preset["daylight_ratio"])
         if "max_starvation_ticks" in preset:

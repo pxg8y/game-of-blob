@@ -2107,23 +2107,29 @@ class SimulationWorld:
                 return step_dx * t_proj, step_dy * t_proj
         return step_dx, step_dy
 
-    def _reflect_arena_bounds(self, blob: Blob) -> None:
+    def _reflect_arena_bounds(self, blob: Blob) -> bool:
         pad = blob.body_radius + 4.0
         max_x = self.world_cfg.width - pad
+        hit_wall = False
         if blob.x < pad:
             blob.x = pad
             blob.vx *= -0.6
+            hit_wall = True
         elif blob.x > max_x:
             blob.x = max_x
             blob.vx *= -0.6
+            hit_wall = True
 
         max_y = self.world_cfg.height - pad
         if blob.y < pad:
             blob.y = pad
             blob.vy *= -0.6
+            hit_wall = True
         elif blob.y > max_y:
             blob.y = max_y
             blob.vy *= -0.6
+            hit_wall = True
+        return hit_wall
 
     def _resolve_terrain_physics(self, blob: Blob) -> bool:
         """
@@ -2206,13 +2212,9 @@ class SimulationWorld:
         home_radius: float,
         night_mode: bool,
         dt_scale: float = 1.0,
+        egocentric_mode: bool = False,
     ) -> float:
         """Update blob position, terrain physics (swamps & rock walls), home status, and energy drain."""
-        mag = math.hypot(move_x, move_y)
-        if mag > 1.0:
-            move_x /= mag
-            move_y /= mag
-
         speed_mult = 1.0 + 0.55 * sprint
         if blob.in_swamp:
             speed_mult *= 0.44
@@ -2223,8 +2225,25 @@ class SimulationWorld:
             speed_mult *= 0.18
 
         blend = 0.28 if dt_scale <= 1.0 else (1.0 - (0.72 ** min(dt_scale, 10.0)))
-        blob.vx = (1.0 - blend) * blob.vx + blend * (move_x * blob.max_speed * speed_mult)
-        blob.vy = (1.0 - blend) * blob.vy + blend * (move_y * blob.max_speed * speed_mult)
+        if egocentric_mode:
+            raw_thrust = max(-1.0, min(1.0, float(move_x)))
+            eff_thrust = raw_thrust if raw_thrust >= 0.0 else 0.35 * raw_thrust
+            turn = max(-1.0, min(1.0, float(move_y)))
+            hd = blob.heading + turn * 0.28 * dt_scale
+            hd = math.atan2(math.sin(hd), math.cos(hd))
+            blob.heading = hd
+            target_vx = math.cos(hd) * eff_thrust * blob.max_speed * speed_mult
+            target_vy = math.sin(hd) * eff_thrust * blob.max_speed * speed_mult
+            blob.vx = (1.0 - blend) * blob.vx + blend * target_vx
+            blob.vy = (1.0 - blend) * blob.vy + blend * target_vy
+        else:
+            mag = math.hypot(move_x, move_y)
+            if mag > 1.0:
+                move_x /= mag
+                move_y /= mag
+
+            blob.vx = (1.0 - blend) * blob.vx + blend * (move_x * blob.max_speed * speed_mult)
+            blob.vy = (1.0 - blend) * blob.vy + blend * (move_y * blob.max_speed * speed_mult)
 
         hx = home_obj.x if home_obj is not None else blob.home_x
         hy = home_obj.y if home_obj is not None else blob.home_y
@@ -2245,11 +2264,15 @@ class SimulationWorld:
             blob.pending_rl_reward -= 0.015
             self.telemetry.on_rock_collision(blob)
 
-        speed_mag = math.hypot(blob.vx, blob.vy)
-        if speed_mag > 0.08:
-            blob.heading = math.atan2(blob.vy, blob.vx)
+        hit_wall = self._reflect_arena_bounds(blob)
 
-        self._reflect_arena_bounds(blob)
+        speed_mag = math.hypot(blob.vx, blob.vy)
+        if egocentric_mode:
+            if (hit_rock or hit_wall) and speed_mag > 0.08:
+                blob.heading = math.atan2(blob.vy, blob.vx)
+        else:
+            if speed_mag > 0.08:
+                blob.heading = math.atan2(blob.vy, blob.vx)
 
         dhx = hx - blob.x
         dhy = hy - blob.y
@@ -2351,6 +2374,7 @@ class SimulationWorld:
             self.world_cfg.reproduction_food_need, self.world_cfg.survival_food_need,
             float(self.world_cfg.ticks_per_day), self.season_info[4], dt_scale, night_mode,
             hit_rocks, speed_norms,
+            egocentric_mode=self.world_cfg.egocentric_frame,
         )
 
         # Elimination of 8 .tolist() array allocations and 16,800 pure-Python attribute assignments!
@@ -2506,6 +2530,7 @@ class SimulationWorld:
         rel_food_wy: Optional[np.ndarray] = None,
         rel_home_wx: Optional[np.ndarray] = None,
         rel_home_wy: Optional[np.ndarray] = None,
+        headings: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Exact Canonical Potential-Based Reward Shaping (PBRS, gamma=1.0) & smooth diurnal arbitration.
@@ -2521,7 +2546,19 @@ class SimulationWorld:
 
         reward = np.where(in_swamps, -0.018, 0.0)
 
-        if disp_xs is not None and disp_ys is not None:
+        speeds = max_speeds if max_speeds is not None else np.full(n, 4.2, dtype=np.float32)
+
+        if self.world_cfg.egocentric_frame and headings is not None:
+            c = np.cos(headings)
+            s = np.sin(headings)
+            inv_speed = 1.0 / np.maximum(1e-4, speeds)
+            vx_arr = vxs if vxs is not None else np.zeros(n, dtype=np.float32)
+            vy_arr = vys if vys is not None else np.zeros(n, dtype=np.float32)
+            eff_vx = (vx_arr * c + vy_arr * s) * inv_speed
+            eff_vy = (-vx_arr * s + vy_arr * c) * inv_speed
+            dx_step = eff_vx
+            dy_step = eff_vy
+        elif disp_xs is not None and disp_ys is not None:
             dx_step = disp_xs
             dy_step = disp_ys
         elif vxs is not None and vys is not None:
@@ -2970,6 +3007,7 @@ class SimulationWorld:
             for idx, blob in enumerate(living_blobs):
                 xs[idx] = blob.x
                 ys[idx] = blob.y
+                self._kin_headings[idx] = blob.heading
                 h_obj = blob.home_obj
                 if h_obj is None or h_obj.id != blob.home_id:
                     h_obj = homes_dict.get(blob.home_id)
@@ -3319,6 +3357,7 @@ class SimulationWorld:
         disp_xs = self._kin_xs[:n_living] - pre_xs
         disp_ys = self._kin_ys[:n_living] - pre_ys
 
+        eff_oasis_vecs = obs_batch[:, 16:19] if self.world_cfg.egocentric_frame else oasis_vecs
         base_rewards = self._compute_movement_shaping_reward_batch(
             self._kin_in_swamps[:n_living],
             self._kin_is_at_homes[:n_living],
@@ -3327,7 +3366,7 @@ class SimulationWorld:
             dx_foods,
             dy_foods,
             food_vecs[:, 2],
-            oasis_vecs,
+            eff_oasis_vecs,
             dx_homes,
             dy_homes,
             tod,
@@ -3341,6 +3380,7 @@ class SimulationWorld:
             pre_headings=pre_headings,
             rel_home_wx=rel_home_wx,
             rel_home_wy=rel_home_wy,
+            headings=self._kin_headings[:n_living] if self.world_cfg.egocentric_frame else None,
         )
         scaled_reward_vec = base_rewards * dt_scale
         step_rewards = (scaled_reward_vec * 2.5).astype(np.float32)
