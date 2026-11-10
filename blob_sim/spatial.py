@@ -881,6 +881,61 @@ def prep_step_observations_numba(
 
 
 @njit(parallel=True, fastmath=True, cache=True)
+def transform_observations_to_egocentric_numba(
+    obs_batch: np.ndarray,
+    headings: np.ndarray,
+) -> None:
+    """
+    In-place rotation of 5 spatial directional vector pairs from world coordinates
+    into the blob's egocentric body coordinate frame (forward, lateral).
+    Forward (> 0) points along the blob's heading direction.
+    Lateral (> 0) points to the blob's right (+pi/2 lateral offset).
+    Designed exclusively for unrotated world-coordinate observation batches.
+    Pairs rotated:
+      - (0, 1): Food dx, dy
+      - (3, 4): Home dx, dy
+      - (6, 7): Peer dx, dy
+      - (16, 17): Oasis dx, dy
+      - (19, 20): Spatial memory dx, dy
+    """
+    n = len(headings)
+    for i in prange(n):
+        theta = headings[i]
+        c = np.float32(math.cos(theta))
+        s = np.float32(math.sin(theta))
+
+        # Food (0, 1)
+        fx = obs_batch[i, 0]
+        fy = obs_batch[i, 1]
+        obs_batch[i, 0] = np.float32(fx * c + fy * s)
+        obs_batch[i, 1] = np.float32(-fx * s + fy * c)
+
+        # Home (3, 4)
+        hx = obs_batch[i, 3]
+        hy = obs_batch[i, 4]
+        obs_batch[i, 3] = np.float32(hx * c + hy * s)
+        obs_batch[i, 4] = np.float32(-hx * s + hy * c)
+
+        # Peer (6, 7)
+        px = obs_batch[i, 6]
+        py = obs_batch[i, 7]
+        obs_batch[i, 6] = np.float32(px * c + py * s)
+        obs_batch[i, 7] = np.float32(-px * s + py * c)
+
+        # Oasis (16, 17)
+        ox = obs_batch[i, 16]
+        oy = obs_batch[i, 17]
+        obs_batch[i, 16] = np.float32(ox * c + oy * s)
+        obs_batch[i, 17] = np.float32(-ox * s + oy * c)
+
+        # Spatial memory (19, 20)
+        mx = obs_batch[i, 19]
+        my = obs_batch[i, 20]
+        obs_batch[i, 19] = np.float32(mx * c + my * s)
+        obs_batch[i, 20] = np.float32(-mx * s + my * c)
+
+
+@njit(parallel=True, fastmath=True, cache=True)
 def apply_kinematics_and_metabolism_batch_numba(
     xs: np.ndarray,
     ys: np.ndarray,
@@ -921,6 +976,7 @@ def apply_kinematics_and_metabolism_batch_numba(
     night_mode: bool,
     hit_rocks_out: np.ndarray,
     speed_norms_out: np.ndarray,
+    egocentric_mode: bool = False,
 ) -> None:
     """
     Parallel 16-thread kinematics, terrain physics, boundary reflection,
@@ -933,22 +989,6 @@ def apply_kinematics_and_metabolism_batch_numba(
     n_swamps = len(swamp_x1)
 
     for i in prange(n):
-        raw_mx = actions_batch[i, 0]
-        raw_my = actions_batch[i, 1]
-        mag = math.hypot(raw_mx, raw_my)
-        if mag > 1.0:
-            mx_ego = raw_mx / mag
-            my_ego = raw_my / mag
-        else:
-            mx_ego = raw_mx
-            my_ego = raw_my
-
-        th = headings[i]
-        cos_th = math.cos(th)
-        sin_th = math.sin(th)
-        mx = cos_th * mx_ego - sin_th * my_ego
-        my = sin_th * mx_ego + cos_th * my_ego
-
         sp = (actions_batch[i, 2] + 1.0) * 0.5
         sp_mult = 1.0 + 0.55 * sp
         if in_swamps[i]:
@@ -958,8 +998,36 @@ def apply_kinematics_and_metabolism_batch_numba(
         ):
             sp_mult *= 0.18
 
-        vx = (1.0 - blend) * vxs[i] + blend * (mx * max_speeds[i] * sp_mult)
-        vy = (1.0 - blend) * vys[i] + blend * (my * max_speeds[i] * sp_mult)
+        if egocentric_mode:
+            raw_thrust = max(-1.0, min(1.0, float(actions_batch[i, 0])))
+            eff_thrust = raw_thrust if raw_thrust >= 0.0 else 0.35 * raw_thrust
+            turn = max(-1.0, min(1.0, float(actions_batch[i, 1])))
+            hd = headings[i] + turn * 0.28 * dt_scale
+            hd = math.atan2(math.sin(hd), math.cos(hd))
+            headings[i] = hd
+            target_vx = math.cos(hd) * eff_thrust * max_speeds[i] * sp_mult
+            target_vy = math.sin(hd) * eff_thrust * max_speeds[i] * sp_mult
+            vx = (1.0 - blend) * vxs[i] + blend * target_vx
+            vy = (1.0 - blend) * vys[i] + blend * target_vy
+        else:
+            raw_mx = actions_batch[i, 0]
+            raw_my = actions_batch[i, 1]
+            mag = math.hypot(raw_mx, raw_my)
+            if mag > 1.0:
+                mx_ego = raw_mx / mag
+                my_ego = raw_my / mag
+            else:
+                mx_ego = raw_mx
+                my_ego = raw_my
+
+            th = headings[i]
+            cos_th = math.cos(th)
+            sin_th = math.sin(th)
+            mx = cos_th * mx_ego - sin_th * my_ego
+            my = sin_th * mx_ego + cos_th * my_ego
+
+            vx = (1.0 - blend) * vxs[i] + blend * (mx * max_speeds[i] * sp_mult)
+            vy = (1.0 - blend) * vys[i] + blend * (my * max_speeds[i] * sp_mult)
 
         hx = home_xs[i]
         hy = home_ys[i]
@@ -1065,28 +1133,36 @@ def apply_kinematics_and_metabolism_batch_numba(
                     vy -= 1.15 * vn * ny
         hit_rocks_out[i] = 1 if hit_rock else 0
 
-        # 3. Heading update on significant velocity
-        sp_mag = math.hypot(vx, vy)
-        if sp_mag > 0.08:
-            headings[i] = math.atan2(vy, vx)
-
-        # 4. Arena boundary reflection
+        # 3. Arena boundary reflection & Heading update
+        hit_wall = False
         pad = br + 4.0
         max_x = width - pad
         if bx < pad:
             bx = pad
             vx *= -0.6
+            hit_wall = True
         elif bx > max_x:
             bx = max_x
             vx *= -0.6
+            hit_wall = True
 
         max_y = height - pad
         if by < pad:
             by = pad
             vy *= -0.6
+            hit_wall = True
         elif by > max_y:
             by = max_y
             vy *= -0.6
+            hit_wall = True
+
+        sp_mag = math.hypot(vx, vy)
+        if egocentric_mode:
+            if (hit_rock or hit_wall) and sp_mag > 0.08:
+                headings[i] = math.atan2(vy, vx)
+        else:
+            if sp_mag > 0.08:
+                headings[i] = math.atan2(vy, vx)
 
         xs[i] = bx
         ys[i] = by
@@ -1501,7 +1577,7 @@ def warmup_all_jit_kernels() -> None:
         dummy_i = np.zeros(2, dtype=np.int32)
         batch_point_hits_rock_csr(dummy_pts, dummy_pts, 10.0, dummy_f, dummy_f, dummy_f, dummy_f, dummy_f, dummy_f, dummy_i, dummy_i, 1.0, 1, 1)
 
-        # 5. Binary Blob Packing Kernel
+        # 5. Binary Blob Packing Kernel & Egocentric Sensor Transformation Kernel
         dummy_out = np.zeros((2, 8), dtype=np.float32)
         dummy_f64 = np.zeros(2, dtype=np.float64)
         dummy_f32 = np.zeros(2, dtype=np.float32)
@@ -1514,6 +1590,9 @@ def warmup_all_jit_kernels() -> None:
             dummy_f32, dummy_f32, dummy_i32, dummy_tab, dummy_u32,
             dummy_bool, dummy_bool, dummy_f32, dummy_f32, dummy_f32, 2
         )
+
+        dummy_obs = np.zeros((2, 26), dtype=np.float32)
+        transform_observations_to_egocentric_numba(dummy_obs, dummy_f32)
 
         # 6. Full Simulation Engine (Spatial, Kinematics, Observation, Peer, Market)
         warmup_simulation_engine()
