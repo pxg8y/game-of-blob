@@ -141,6 +141,51 @@ class TestBlobSimulation(unittest.TestCase):
         self.assertAlmostEqual(seller.food_today, 0.1, places=2)
         self.assertAlmostEqual(buyer.food_today, 0.5, places=2)
         self.assertGreater(seller.money, seller_money_before)
+        # Verify that selling food below survival need yields a negative reinforcement penalty
+        self.assertLess(seller.pending_rl_reward, 0.0)
+        self.assertLess(seller.cumulative_reward, 0.0)
+
+    def test_trade_rewards_and_hunger_penalty(self) -> None:
+        """Verify reward function appropriately rewards surplus/buying and penalizes hunger-selling."""
+        world = SimulationWorld(seed=12)
+        seller, buyer = world.blobs[0], world.blobs[1]
+        home = world.homes[seller.home_id]
+        home.gold_vault = 10.0
+        home.food_depot = 5.0
+
+        # 1. Selling surplus food above repro need rewards seller positively
+        seller.food_today = 2.5
+        seller.surplus_food = 1.0
+        seller.trade_desire = 0.5
+        seller.pending_rl_reward = 0.0
+        seller.cumulative_reward = 0.0
+        sold_surplus = world._try_village_market_trade(seller, home)
+        self.assertTrue(sold_surplus)
+        self.assertGreater(seller.pending_rl_reward, 0.0)
+        self.assertGreater(seller.cumulative_reward, 0.0)
+
+        # 2. Selling food when hungry (food_today < survival_need) incurs negative RL reward
+        seller.food_today = 0.6
+        seller.surplus_food = 0.0
+        seller.trade_desire = 0.5
+        seller.pending_rl_reward = 0.0
+        seller.cumulative_reward = 0.0
+        sold_hungry = world._try_village_market_trade(seller, home)
+        self.assertTrue(sold_hungry)
+        self.assertLess(seller.pending_rl_reward, 0.0)
+        self.assertLess(seller.cumulative_reward, 0.0)
+
+        # 3. Buying food when hungry yields positive reward
+        buyer.food_today = 0.2
+        buyer.surplus_food = 0.0
+        buyer.money = 5.0
+        buyer.trade_desire = 0.5
+        buyer.pending_rl_reward = 0.0
+        buyer.cumulative_reward = 0.0
+        bought_food = world._try_village_market_trade(buyer, home)
+        self.assertTrue(bought_food)
+        self.assertGreater(buyer.pending_rl_reward, 0.0)
+        self.assertGreater(buyer.cumulative_reward, 0.0)
 
     def test_max_residents_per_home_and_multi_home_settlements(self) -> None:
         world = SimulationWorld(
