@@ -129,10 +129,20 @@ class BlobBrain:
             width=config.width,
             custom_layers=list(config.custom_layers) if config.custom_layers else None,
             activation=config.activation,
+            recurrent_dim=getattr(config, "recurrent_dim", 0),
         )
         self.rng = rng or np.random.default_rng()
+        self.recurrent_dim = self.config.get_recurrent_dim()
         hidden_dims = self.config.get_hidden_dims()
-        self.layer_dims: List[int] = [INPUT_DIM, *hidden_dims, OUTPUT_DIM]
+        in_dim = INPUT_DIM + self.recurrent_dim
+        out_dim = OUTPUT_DIM + self.recurrent_dim
+        self.layer_dims: List[int] = [in_dim, *hidden_dims, out_dim]
+        if self.recurrent_dim > 0:
+            self.hidden_state = np.zeros((self.recurrent_dim,), dtype=np.float32)
+            self._mem_alphas = np.linspace(0.06, 0.50, self.recurrent_dim, dtype=np.float32)
+        else:
+            self.hidden_state = None
+            self._mem_alphas = None
 
         shapes_match = (
             weights is not None
@@ -230,7 +240,48 @@ class BlobBrain:
 
     def forward(self, obs: np.ndarray, explore_noise: float = 0.05) -> np.ndarray:
         """Compute action outputs from sensory observation vector and update eligibility traces."""
-        a = np.asarray(obs, dtype=np.float32)
+        if self.recurrent_dim == 0:
+            a = np.asarray(obs, dtype=np.float32)
+            self.last_activations = [a]
+
+            num_layers = len(self.weights)
+            for idx in range(num_layers):
+                z = a @ self.weights[idx] + self.biases[idx]
+                if idx < num_layers - 1:
+                    a = apply_activation(z, self.config.activation)
+                else:
+                    # Output layer bounded in [-1, 1] via tanh
+                    if explore_noise > 0.0:
+                        z = z + self.rng.standard_normal(z.shape, dtype=np.float32) * np.float32(explore_noise)
+                    a = np.tanh(z)
+                self.last_activations.append(a)
+
+            # Backpropagate output sensitivity delta across layers for structurally valid credit assignment
+            decay = np.float32(0.98)
+            one_minus_decay = np.float32(0.02)
+            out_act = self.last_activations[-1]
+            delta = out_act * np.maximum(np.float32(0.15), _F32_ONE - out_act * out_act)
+            tw_list = self.traces_w
+            tb_list = self.traces_b
+            for idx in range(num_layers - 1, -1, -1):
+                pre = self.last_activations[idx][:, None]
+                post_delta = delta[None, :]
+                tw_list[idx] *= decay
+                tw_list[idx] += one_minus_decay * (pre @ post_delta)
+                tb_list[idx] *= decay
+                tb_list[idx] += one_minus_decay * delta
+                if idx > 0:
+                    hidden_act = self.last_activations[idx]
+                    deriv = activation_derivative(hidden_act, self.config.activation)
+                    delta = (delta @ self.weights[idx].T) * deriv
+
+            return self.last_activations[-1]
+
+        # Recurrent working memory path (self.recurrent_dim > 0)
+        obs_arr = np.asarray(obs, dtype=np.float32)
+        if self.hidden_state is None:
+            self.hidden_state = np.zeros((self.recurrent_dim,), dtype=np.float32)
+        a = np.concatenate([obs_arr, self.hidden_state])
         self.last_activations = [a]
 
         num_layers = len(self.weights)
@@ -240,15 +291,23 @@ class BlobBrain:
                 a = apply_activation(z, self.config.activation)
             else:
                 # Output layer bounded in [-1, 1] via tanh
+                # Apply explore_noise ONLY to motor action logits z[:OUTPUT_DIM]
                 if explore_noise > 0.0:
-                    z = z + self.rng.standard_normal(z.shape, dtype=np.float32) * np.float32(explore_noise)
+                    z[:OUTPUT_DIM] = z[:OUTPUT_DIM] + self.rng.standard_normal(
+                        (OUTPUT_DIM,), dtype=np.float32
+                    ) * np.float32(explore_noise)
                 a = np.tanh(z)
             self.last_activations.append(a)
 
-        # Backpropagate output sensitivity delta across layers for structurally valid credit assignment
+        out_act = self.last_activations[-1]
+        # Update leaky integrator recurrent hidden state
+        self.hidden_state = (
+            np.float32(1.0) - self._mem_alphas
+        ) * self.hidden_state + self._mem_alphas * out_act[OUTPUT_DIM:]
+
+        # Backpropagate output sensitivity delta across layers over full out_act (6 + M)
         decay = np.float32(0.98)
         one_minus_decay = np.float32(0.02)
-        out_act = self.last_activations[-1]
         delta = out_act * np.maximum(np.float32(0.15), _F32_ONE - out_act * out_act)
         tw_list = self.traces_w
         tb_list = self.traces_b
@@ -264,7 +323,7 @@ class BlobBrain:
                 deriv = activation_derivative(hidden_act, self.config.activation)
                 delta = (delta @ self.weights[idx].T) * deriv
 
-        return self.last_activations[-1]
+        return out_act[:OUTPUT_DIM]
 
     def apply_online_learning(self, reward: float, learning_rate: float) -> None:
         """
@@ -441,6 +500,8 @@ class BlobBrain:
             rng=self.rng,
             _copy_arrays=False,
         )
+        if self.recurrent_dim > 0 and self.hidden_state is not None:
+            child.hidden_state = np.zeros((self.recurrent_dim,), dtype=np.float32)
         if partner is not None:
             child.reward_baseline_event = float(0.65 * self.reward_baseline_event + 0.35 * partner.reward_baseline_event)
         else:
@@ -453,30 +514,80 @@ class BlobBrain:
         """
         Adapt this brain to a new user-defined depth/width configuration,
         preserving overlapping sub-matrices of weights so learned behavior is not lost.
+        Cleanly copies sensor block [:26] and motor block [:6].
         """
         self._sync_from_pool()
         adapted = BlobBrain(config=new_config, rng=self.rng)
-        min_layers = min(len(self.weights), len(adapted.weights))
+        num_old = len(self.weights)
+        num_new = len(adapted.weights)
+
+        # Map layer weights
+        # For intermediate layers (1 to min(num_old, num_new) - 2): direct overlapping block copy
+        # For first layer (0): copy sensor block [:INPUT_DIM] and recurrent block if any
+        # For last layer: copy motor block [:OUTPUT_DIM]
+        min_layers = min(num_old, num_new)
         for i in range(min_layers):
             old_w = self.weights[i]
             new_w = adapted.weights[i]
-            r = min(old_w.shape[0], new_w.shape[0])
-            c = min(old_w.shape[1], new_w.shape[1])
-            adapted.weights[i][:r, :c] = old_w[:r, :c]
-
             old_b = self.biases[i]
             new_b = adapted.biases[i]
-            cb = min(old_b.shape[0], new_b.shape[0])
-            adapted.biases[i][:cb] = old_b[:cb]
+
+            is_first = (i == 0)
+            is_last = (i == min_layers - 1) and (num_old == num_new)
+
+            if is_first:
+                # Copy sensory input block
+                r_in = min(INPUT_DIM, old_w.shape[0], new_w.shape[0])
+                c_h = min(old_w.shape[1], new_w.shape[1])
+                new_w[:r_in, :c_h] = old_w[:r_in, :c_h]
+                # If both have recurrent inputs, copy overlapping recurrent inputs
+                if self.recurrent_dim > 0 and adapted.recurrent_dim > 0:
+                    r_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+                    new_w[INPUT_DIM : INPUT_DIM + r_rec, :c_h] = old_w[
+                        INPUT_DIM : INPUT_DIM + r_rec, :c_h
+                    ]
+                new_b[:c_h] = old_b[:c_h]
+            elif is_last:
+                # Copy motor output block
+                r_h = min(old_w.shape[0], new_w.shape[0])
+                c_out = min(OUTPUT_DIM, old_w.shape[1], new_w.shape[1])
+                new_w[:r_h, :c_out] = old_w[:r_h, :c_out]
+                new_b[:c_out] = old_b[:c_out]
+                # If both have recurrent outputs, copy overlapping recurrent outputs
+                if self.recurrent_dim > 0 and adapted.recurrent_dim > 0:
+                    c_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+                    new_w[:r_h, OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_w[:r_h, OUTPUT_DIM : OUTPUT_DIM + c_rec]
+                    new_b[OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_b[
+                        OUTPUT_DIM : OUTPUT_DIM + c_rec
+                    ]
+            else:
+                r = min(old_w.shape[0], new_w.shape[0])
+                c = min(old_w.shape[1], new_w.shape[1])
+                new_w[:r, :c] = old_w[:r, :c]
+                new_b[:c] = old_b[:c]
 
         # Also preserve output projection from last layer if layer count changed
-        if len(self.weights) != len(adapted.weights):
+        if num_old != num_new:
             old_last_w = self.weights[-1]
             new_last_w = adapted.weights[-1]
+            old_last_b = self.biases[-1]
+            new_last_b = adapted.biases[-1]
             r = min(old_last_w.shape[0], new_last_w.shape[0])
-            c = min(old_last_w.shape[1], new_last_w.shape[1])
-            adapted.weights[-1][:r, :c] = old_last_w[:r, :c]
-            adapted.biases[-1][:c] = self.biases[-1][:c]
+            c_out = min(OUTPUT_DIM, old_last_w.shape[1], new_last_w.shape[1])
+            new_last_w[:r, :c_out] = old_last_w[:r, :c_out]
+            new_last_b[:c_out] = old_last_b[:c_out]
+            if self.recurrent_dim > 0 and adapted.recurrent_dim > 0:
+                c_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+                new_last_w[:r, OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_last_w[
+                    :r, OUTPUT_DIM : OUTPUT_DIM + c_rec
+                ]
+                new_last_b[OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_last_b[
+                    OUTPUT_DIM : OUTPUT_DIM + c_rec
+                ]
+
+        if adapted.recurrent_dim > 0 and self.recurrent_dim > 0 and self.hidden_state is not None:
+            min_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+            adapted.hidden_state[:min_rec] = self.hidden_state[:min_rec]
 
         return adapted
 
@@ -486,19 +597,36 @@ class BlobBrain:
     def to_inspector_payload(self, max_nodes_per_layer: int = 26) -> Dict[str, Any]:
         """Serialize activations and downsampled weights for live GUI neural network rendering."""
         self._sync_from_pool()
-        layers_act = [
-            np.round(a[:max_nodes_per_layer].astype(np.float64), 3).tolist()
-            for a in self.last_activations
-        ]
+        num_layers = len(self.last_activations)
+        layers_act = []
+        for l_idx, a in enumerate(self.last_activations):
+            if l_idx == 0:
+                cap = min(INPUT_DIM, max_nodes_per_layer)
+            elif l_idx == num_layers - 1:
+                cap = min(OUTPUT_DIM, max_nodes_per_layer)
+            else:
+                cap = max_nodes_per_layer
+            layers_act.append(np.round(a[:cap].astype(np.float64), 3).tolist())
 
         weights_viz = []
-        for w in self.weights:
-            r = min(w.shape[0], max_nodes_per_layer)
-            c = min(w.shape[1], max_nodes_per_layer)
+        num_w = len(self.weights)
+        for w_idx, w in enumerate(self.weights):
+            if w_idx == 0:
+                r = min(INPUT_DIM, max_nodes_per_layer)
+                c = min(w.shape[1], max_nodes_per_layer)
+            elif w_idx == num_w - 1:
+                r = min(w.shape[0], max_nodes_per_layer)
+                c = min(OUTPUT_DIM, max_nodes_per_layer)
+            else:
+                r = min(w.shape[0], max_nodes_per_layer)
+                c = min(w.shape[1], max_nodes_per_layer)
             weights_viz.append(np.round(w[:r, :c].astype(np.float64), 2).tolist())
 
+        # Inspector expects standard layer_dims for GUI rendering [26, *hidden, 6]
+        disp_dims = [min(INPUT_DIM, self.layer_dims[0])] + self.layer_dims[1:-1] + [min(OUTPUT_DIM, self.layer_dims[-1])]
+
         return {
-            "layer_dims": self.layer_dims,
+            "layer_dims": disp_dims,
             "activation": self.config.activation,
             "param_count": self._param_count,
             "activations": layers_act,
@@ -510,21 +638,27 @@ class BlobBrain:
     def to_snapshot_dict(self) -> Dict[str, Any]:
         """Fast in-memory snapshot preserving float32 NumPy arrays without Python float boxing."""
         self._sync_from_pool()
-        return {
+        res = {
             "config": self.config.to_dict(),
             "layer_dims": list(self.layer_dims),
             "weights": [w.copy() for w in self.weights],
             "biases": [b.copy() for b in self.biases],
         }
+        if self.recurrent_dim > 0 and self.hidden_state is not None:
+            res["hidden_state"] = self.hidden_state.copy()
+        return res
 
     def to_dict(self) -> Dict[str, Any]:
         self._sync_from_pool()
-        return {
+        res = {
             "config": self.config.to_dict(),
             "layer_dims": self.layer_dims,
             "weights": [w.tolist() for w in self.weights],
             "biases": [b.tolist() for b in self.biases],
         }
+        if self.recurrent_dim > 0 and self.hidden_state is not None:
+            res["hidden_state"] = self.hidden_state.tolist()
+        return res
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], rng: Optional[np.random.Generator] = None) -> "BlobBrain":
@@ -534,10 +668,16 @@ class BlobBrain:
             width=cfg_data.get("width", 24),
             custom_layers=cfg_data.get("custom_layers"),
             activation=cfg_data.get("activation", "tanh"),
+            recurrent_dim=cfg_data.get("recurrent_dim", 0),
         )
         weights = [np.asarray(w, dtype=np.float32) for w in data.get("weights", [])]
         biases = [np.asarray(b, dtype=np.float32) for b in data.get("biases", [])]
-        return cls(config=cfg, weights=weights, biases=biases, rng=rng, _copy_arrays=True)
+        brain = cls(config=cfg, weights=weights, biases=biases, rng=rng, _copy_arrays=True)
+        if brain.recurrent_dim > 0 and "hidden_state" in data:
+            hs = np.asarray(data["hidden_state"], dtype=np.float32)
+            if hs.shape == (brain.recurrent_dim,):
+                brain.hidden_state[:] = hs
+        return brain
 
 
 class BatchedBrainPool:
@@ -555,6 +695,10 @@ class BatchedBrainPool:
         self._ring_ptr: int = 0
         self._current_trace_rank: int = _TRACE_RANK
         self._has_pending_w_updates: bool = False
+        self._recurrent_dim: int = 0
+        self._mem_alphas: np.ndarray = np.empty((0,), dtype=np.float32)
+        self._H_cap: np.ndarray = np.empty((0, 0), dtype=np.float32)
+        self._in_buf_cap: np.ndarray = np.empty((0, 0), dtype=np.float32)
 
         self._W_cap: List[np.ndarray] = []
         self._B_cap: List[np.ndarray] = []
@@ -612,6 +756,10 @@ class BatchedBrainPool:
         self._accum_coef_cap = np.empty((0, _TRACE_RANK), dtype=np.float32)
         self._last_out_cap = np.empty((0, OUTPUT_DIM), dtype=np.float32)
         self._out_valid_cap = np.empty((0,), dtype=np.bool_)
+        self._recurrent_dim = 0
+        self._mem_alphas = np.empty((0,), dtype=np.float32)
+        self._H_cap = np.empty((0, 0), dtype=np.float32)
+        self._in_buf_cap = np.empty((0, 0), dtype=np.float32)
         self._capacity = 0
         self._last_bound_brains = None
 
@@ -680,6 +828,17 @@ class BatchedBrainPool:
         self._current_trace_rank = trace_rank
         cohort_cap = min(new_cap, max(64, (new_cap + 2) // 3 + 32)) if is_large else new_cap
 
+        rec_dim = max(0, dims[0] - INPUT_DIM)
+        self._recurrent_dim = rec_dim
+        if rec_dim > 0:
+            self._mem_alphas = np.linspace(0.06, 0.50, rec_dim, dtype=np.float32)
+            new_H_cap = np.zeros((new_cap, rec_dim), dtype=np.float32)
+            new_in_buf_cap = np.empty((cohort_cap, dims[0]), dtype=np.float32)
+        else:
+            self._mem_alphas = np.empty((0,), dtype=np.float32)
+            new_H_cap = np.zeros((0, 0), dtype=np.float32)
+            new_in_buf_cap = np.empty((0, 0), dtype=np.float32)
+
         new_W_cap: List[np.ndarray] = []
         new_B_cap: List[np.ndarray] = []
         new_TB_cap: List[np.ndarray] = []
@@ -728,13 +887,15 @@ class BatchedBrainPool:
 
         new_tw = np.zeros((new_cap, trace_rank), dtype=np.float32)
         new_ac = np.zeros((new_cap, trace_rank), dtype=np.float32)
-        new_last_out = np.zeros((new_cap, dims[-1]), dtype=np.float32)
+        new_last_out = np.zeros((new_cap, OUTPUT_DIM), dtype=np.float32)
         new_out_valid = np.zeros((new_cap,), dtype=np.bool_)
         if topology_same and preserve_n > 0:
             new_tw[:preserve_n] = self._trace_weights_cap[:preserve_n]
             new_ac[:preserve_n] = self._accum_coef_cap[:preserve_n]
             new_last_out[:preserve_n] = self._last_out_cap[:preserve_n]
             new_out_valid[:preserve_n] = self._out_valid_cap[:preserve_n]
+            if rec_dim > 0 and self._H_cap.shape[1] == rec_dim:
+                new_H_cap[:preserve_n] = self._H_cap[:preserve_n]
 
         self._W_cap = new_W_cap
         self._B_cap = new_B_cap
@@ -743,6 +904,8 @@ class BatchedBrainPool:
         self._D_hist_cap = new_D_cap
         self._Z_cap = new_Z_cap
         self._D_back_cap = new_D_back_cap
+        self._H_cap = new_H_cap
+        self._in_buf_cap = new_in_buf_cap
         self._trace_weights_cap = new_tw
         self._accum_coef_cap = new_ac
         self._last_out_cap = new_last_out
@@ -802,6 +965,7 @@ class BatchedBrainPool:
     def _copy_or_init_slot(
         self, new_idx: int, old_slot: Optional[int], br: BlobBrain, num_layers: int
     ) -> None:
+        rec_dim = self._recurrent_dim
         if old_slot is not None:
             if old_slot != new_idx:
                 for lay in range(num_layers):
@@ -814,6 +978,8 @@ class BatchedBrainPool:
                 self._accum_coef_cap[new_idx] = self._accum_coef_cap[old_slot]
                 self._last_out_cap[new_idx] = self._last_out_cap[old_slot]
                 self._out_valid_cap[new_idx] = False
+                if rec_dim > 0:
+                    self._H_cap[new_idx] = self._H_cap[old_slot]
         else:
             for lay in range(num_layers):
                 self._W_cap[lay][new_idx] = br.weights[lay]
@@ -825,6 +991,11 @@ class BatchedBrainPool:
             self._accum_coef_cap[new_idx] = _F32_ZERO
             self._last_out_cap[new_idx] = _F32_ZERO
             self._out_valid_cap[new_idx] = False
+            if rec_dim > 0:
+                if br.hidden_state is not None and br.hidden_state.shape == (rec_dim,):
+                    self._H_cap[new_idx] = br.hidden_state
+                else:
+                    self._H_cap[new_idx] = _F32_ZERO
             # Dual-engine epigenetic parity: preserve br.reward_baseline_event on newborn slot init!
             # Do NOT reset br.reward_baseline_event to 0.0
             br.reward_baseline_dense = 0.0
@@ -833,10 +1004,13 @@ class BatchedBrainPool:
         for lay in range(num_layers):
             br.weights[lay] = self._W_cap[lay][new_idx]
             br.biases[lay] = self._B_cap[lay][new_idx]
+        if rec_dim > 0:
+            br.hidden_state = self._H_cap[new_idx]
 
     def _bind_fallback_copy(self, brains: List[BlobBrain], num_layers: int) -> None:
         if self._has_pending_w_updates and self._bound_ids:
             self.flush_weights()
+        rec_dim = self._recurrent_dim
         needs_cycle = (
             any(
                 any(br.weights[lay].base is self._W_cap[lay] for lay in range(num_layers))
@@ -861,14 +1035,23 @@ class BatchedBrainPool:
                 self._accum_coef_cap[new_idx] = _F32_ZERO
                 self._last_out_cap[new_idx] = _F32_ZERO
                 self._out_valid_cap[new_idx] = False
+                if rec_dim > 0:
+                    if br.hidden_state is not None and br.hidden_state.shape == (rec_dim,):
+                        self._H_cap[new_idx] = br.hidden_state
+                    else:
+                        self._H_cap[new_idx] = _F32_ZERO
+                    br.hidden_state = self._H_cap[new_idx]
         else:
             old_slots = [self._slot_map.get(id(br)) for br in brains]
             saved_w: Dict[int, List[np.ndarray]] = {}
             saved_b: Dict[int, List[np.ndarray]] = {}
+            saved_h: Dict[int, np.ndarray] = {}
             for new_idx, (br, old_slot) in enumerate(zip(brains, old_slots, strict=False)):
                 if old_slot is not None and old_slot != new_idx:
                     saved_w[new_idx] = [self._W_cap[lay][old_slot].copy() for lay in range(num_layers)]
                     saved_b[new_idx] = [self._B_cap[lay][old_slot].copy() for lay in range(num_layers)]
+                    if rec_dim > 0:
+                        saved_h[new_idx] = self._H_cap[old_slot].copy()
             for new_idx, br in enumerate(brains):
                 br._pool_ref = self
                 for lay in range(num_layers):
@@ -889,6 +1072,14 @@ class BatchedBrainPool:
                 self._accum_coef_cap[new_idx] = _F32_ZERO
                 self._last_out_cap[new_idx] = _F32_ZERO
                 self._out_valid_cap[new_idx] = False
+                if rec_dim > 0:
+                    if new_idx in saved_h:
+                        self._H_cap[new_idx] = saved_h[new_idx]
+                    elif br.hidden_state is not None and br.hidden_state.shape == (rec_dim,):
+                        self._H_cap[new_idx] = br.hidden_state
+                    else:
+                        self._H_cap[new_idx] = _F32_ZERO
+                    br.hidden_state = self._H_cap[new_idx]
         self._ring_ptr = 0
 
     def _ensure_pool_capacity(self, dims: List[int], n: int, old_n: int) -> bool:
@@ -1050,6 +1241,7 @@ class BatchedBrainPool:
         act_kind = brains[0].config.activation
         act_code = _ACT_CODE_MAP.get(act_kind, 0)
         cohort_cap = len(self._Z_cap[0]) if self._Z_cap else n
+        rec_dim = self._recurrent_dim
 
         # Check invalid slots (from swap-remove death compaction)
         invalid_mask = ~self._out_valid_cap[:n]
@@ -1076,7 +1268,14 @@ class BatchedBrainPool:
         dummy_noise = np.empty((0, 0), dtype=np.float32)
 
         if sub_n <= cohort_cap:
-            a = obs_batch[eval_target]
+            if rec_dim > 0:
+                in_buf = self._in_buf_cap[:sub_n]
+                in_buf[:, :INPUT_DIM] = obs_batch[eval_target]
+                in_buf[:, INPUT_DIM:] = self._H_cap[eval_target]
+                a = in_buf
+            else:
+                a = obs_batch[eval_target]
+
             acts: List[np.ndarray] = [a]
             use_numba = sub_n >= 96
 
@@ -1088,11 +1287,14 @@ class BatchedBrainPool:
 
                 if use_numba:
                     has_n = is_out and explore_noise > 0.0
-                    n_arr = (
-                        rng.standard_normal(z.shape, dtype=np.float32) * np.float32(explore_noise)
-                        if has_n
-                        else dummy_noise
-                    )
+                    if has_n:
+                        n_arr = np.zeros(z.shape, dtype=np.float32)
+                        n_arr[:, :OUTPUT_DIM] = (
+                            rng.standard_normal((sub_n, OUTPUT_DIM), dtype=np.float32)
+                            * np.float32(explore_noise)
+                        )
+                    else:
+                        n_arr = dummy_noise
                     parallel_mlp_layer_forward(a, w_sub, b_sub, z, act_code, is_out, n_arr, has_n)
                     a = z
                 else:
@@ -1103,20 +1305,28 @@ class BatchedBrainPool:
                         a = apply_activation(z, act_kind, out=z)
                     else:
                         if explore_noise > 0.0:
-                            z += rng.standard_normal(z.shape, dtype=np.float32) * np.float32(explore_noise)
+                            z[:, :OUTPUT_DIM] += (
+                                rng.standard_normal((sub_n, OUTPUT_DIM), dtype=np.float32)
+                                * np.float32(explore_noise)
+                            )
                         a = np.tanh(z, out=z)
                 acts.append(a)
 
-            out_act = acts[-1]
-            self._last_out_cap[eval_target] = out_act
+            out_full = acts[-1]
+            self._last_out_cap[eval_target] = out_full[:, :OUTPUT_DIM]
             self._out_valid_cap[eval_target] = True
+
+            if rec_dim > 0:
+                self._H_cap[eval_target] = (
+                    np.float32(1.0) - self._mem_alphas
+                ) * self._H_cap[eval_target] + self._mem_alphas * out_full[:, OUTPUT_DIM:]
 
             if update_traces:
                 self._record_ring_buffer_traces(
                     n,
                     num_layers,
                     acts,
-                    out_act,
+                    out_full,
                     act_kind,
                     cohort_slice=eval_target if use_cohort else None,
                     start_new_slot=(not use_cohort) or (cohort_idx == 0) or (self._ring_ptr == 0),
@@ -1130,7 +1340,10 @@ class BatchedBrainPool:
                         local_i = inspect_idx // 3
                         brains[inspect_idx].last_activations = [layer_act[local_i].copy() for layer_act in acts]
                     else:
-                        ins_a = obs_batch[inspect_idx]
+                        if rec_dim > 0:
+                            ins_a = np.concatenate([obs_batch[inspect_idx], self._H_cap[inspect_idx]])
+                        else:
+                            ins_a = obs_batch[inspect_idx]
                         ins_acts = [ins_a.copy()]
                         for idx in range(num_layers):
                             iz = ins_a @ self.W_batch[idx][inspect_idx] + self.B_batch[idx][inspect_idx]
@@ -1143,7 +1356,10 @@ class BatchedBrainPool:
                         local_i = int(locs[0])
                         brains[inspect_idx].last_activations = [layer_act[local_i].copy() for layer_act in acts]
                     else:
-                        ins_a = obs_batch[inspect_idx]
+                        if rec_dim > 0:
+                            ins_a = np.concatenate([obs_batch[inspect_idx], self._H_cap[inspect_idx]])
+                        else:
+                            ins_a = obs_batch[inspect_idx]
                         ins_acts = [ins_a.copy()]
                         for idx in range(num_layers):
                             iz = ins_a @ self.W_batch[idx][inspect_idx] + self.B_batch[idx][inspect_idx]
@@ -1155,11 +1371,18 @@ class BatchedBrainPool:
             last_acts_full: Optional[List[np.ndarray]] = (
                 [np.empty((n, d), dtype=np.float32) for d in self._layer_dims] if update_traces else None
             )
+            out_full_cap = np.empty((n, self._layer_dims[-1]), dtype=np.float32)
             for c_start in range(0, sub_n, cohort_cap):
                 c_end = min(c_start + cohort_cap, sub_n)
                 cur_len = c_end - c_start
                 c_slice = slice(c_start, c_end)
-                a = obs_batch[c_slice]
+                if rec_dim > 0:
+                    in_buf = self._in_buf_cap[:cur_len]
+                    in_buf[:, :INPUT_DIM] = obs_batch[c_slice]
+                    in_buf[:, INPUT_DIM:] = self._H_cap[c_slice]
+                    a = in_buf
+                else:
+                    a = obs_batch[c_slice]
                 c_acts = [a]
                 if last_acts_full is not None:
                     last_acts_full[0][c_slice] = a
@@ -1173,11 +1396,14 @@ class BatchedBrainPool:
 
                     if use_numba:
                         has_n = is_out and explore_noise > 0.0
-                        n_arr = (
-                            rng.standard_normal(z.shape, dtype=np.float32) * np.float32(explore_noise)
-                            if has_n
-                            else dummy_noise
-                        )
+                        if has_n:
+                            n_arr = np.zeros(z.shape, dtype=np.float32)
+                            n_arr[:, :OUTPUT_DIM] = (
+                                rng.standard_normal((cur_len, OUTPUT_DIM), dtype=np.float32)
+                                * np.float32(explore_noise)
+                            )
+                        else:
+                            n_arr = dummy_noise
                         parallel_mlp_layer_forward(a, w_sub, b_sub, z, act_code, is_out, n_arr, has_n)
                         a = z
                     else:
@@ -1188,29 +1414,40 @@ class BatchedBrainPool:
                             a = apply_activation(z, act_kind, out=z)
                         else:
                             if explore_noise > 0.0:
-                                z += rng.standard_normal(z.shape, dtype=np.float32) * np.float32(explore_noise)
+                                z[:, :OUTPUT_DIM] += (
+                                    rng.standard_normal((cur_len, OUTPUT_DIM), dtype=np.float32)
+                                    * np.float32(explore_noise)
+                                )
                             a = np.tanh(z, out=z)
                     c_acts.append(a)
                     if last_acts_full is not None:
                         last_acts_full[idx + 1][c_slice] = a
 
                 c_out = c_acts[-1]
-                self._last_out_cap[c_slice] = c_out
+                out_full_cap[c_slice] = c_out
+                self._last_out_cap[c_slice] = c_out[:, :OUTPUT_DIM]
                 self._out_valid_cap[c_slice] = True
+                if rec_dim > 0:
+                    self._H_cap[c_slice] = (
+                        np.float32(1.0) - self._mem_alphas
+                    ) * self._H_cap[c_slice] + self._mem_alphas * c_out[:, OUTPUT_DIM:]
 
             if update_traces and last_acts_full is not None:
                 self._record_ring_buffer_traces(
                     n,
                     num_layers,
                     last_acts_full,
-                    self._last_out_cap[:n],
+                    out_full_cap[:n],
                     act_kind,
                     cohort_slice=None,
                     start_new_slot=True,
                 )
 
             if 0 <= inspect_idx < n:
-                ins_a = obs_batch[inspect_idx]
+                if rec_dim > 0:
+                    ins_a = np.concatenate([obs_batch[inspect_idx], self._H_cap[inspect_idx]])
+                else:
+                    ins_a = obs_batch[inspect_idx]
                 ins_acts = [ins_a.copy()]
                 for idx in range(num_layers):
                     iz = ins_a @ self.W_batch[idx][inspect_idx] + self.B_batch[idx][inspect_idx]
