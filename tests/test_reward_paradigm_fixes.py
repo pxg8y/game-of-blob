@@ -187,19 +187,21 @@ class TestRewardParadigmFixes(unittest.TestCase):
         cfg = NetworkConfig(depth=2, width=16)
         brain = BlobBrain(config=cfg)
 
-        # Small dense shaping steps
+        # Under centered PBRS, dense shaping is zero-mean potential difference: b_dense stays 0.0
         for _ in range(5):
             brain.apply_online_learning(reward=0.05, learning_rate=0.01)
         dense_base = brain.reward_baseline_dense
-        self.assertGreater(dense_base, 0.0)
+        self.assertEqual(dense_base, 0.0)
 
-        # Large sparse event (e.g. eating food +1.20)
+        # Large sparse event (e.g. eating food +1.20) updates event baseline
         brain.apply_online_learning(reward=1.20, learning_rate=0.01)
         event_base = brain.reward_baseline_event
         self.assertGreater(event_base, 0.0)
 
-        # On next dense step, dense baseline should NOT have jumped by 1.20
-        self.assertLess(brain.reward_baseline_dense, 0.10)
+        # On next dense step, dense baseline should remain exactly 0.0 and isolated
+        brain.apply_online_learning(reward=0.05, learning_rate=0.01)
+        self.assertEqual(brain.reward_baseline_dense, 0.0)
+        self.assertGreater(brain.reward_baseline_event, 0.0)
 
 
 if __name__ == "__main__":

@@ -2497,48 +2497,138 @@ class SimulationWorld:
         vxs: Optional[np.ndarray] = None,
         vys: Optional[np.ndarray] = None,
         max_speeds: Optional[np.ndarray] = None,
+        disp_xs: Optional[np.ndarray] = None,
+        disp_ys: Optional[np.ndarray] = None,
+        d_norms: Optional[np.ndarray] = None,
+        dist_homes: Optional[np.ndarray] = None,
+        pre_headings: Optional[np.ndarray] = None,
+        rel_food_wx: Optional[np.ndarray] = None,
+        rel_food_wy: Optional[np.ndarray] = None,
+        rel_home_wx: Optional[np.ndarray] = None,
+        rel_home_wy: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """Vectorized computation of movement shaping rewards across all living blobs."""
-        pref_exp = self.prefs.pref_exploration
+        """
+        Exact Canonical Potential-Based Reward Shaping (PBRS, gamma=1.0) & smooth diurnal arbitration.
+        - F(s, s') = Phi(s') - Phi(s) = (min(d_before, D_norm) - min(d_after, D_norm)) / D_norm.
+        - Uses exact Euclidean distance difference in world coordinates (independent of heading).
+        - Telescopes on any closed path to EXACTLY 0.0 (no circular Taylor-approximation leak).
+        - Smooth, continuous ETA- and hunger-based homing arbitration without artificial cliffs.
+        """
+        n = len(in_swamps)
+        pref_food = self.prefs.pref_food
         pref_home = self.prefs.pref_home
+        pref_exp = self.prefs.pref_exploration
 
-        move_x = actions_batch[:, 0]
-        move_y = actions_batch[:, 1]
-
-        if vxs is not None and vys is not None and max_speeds is not None:
-            inv_speed = 1.0 / np.maximum(1e-4, max_speeds)
-            eff_vx = 0.5 * move_x + 0.5 * (vxs * inv_speed)
-            eff_vy = 0.5 * move_y + 0.5 * (vys * inv_speed)
-        else:
-            eff_vx = move_x
-            eff_vy = move_y
-
-        # Swamp traversal penalty
         reward = np.where(in_swamps, -0.018, 0.0)
 
-        # Hungry foraging behavior
-        hungry = foods_today < repro_target
+        if disp_xs is not None and disp_ys is not None:
+            dx_step = disp_xs
+            dy_step = disp_ys
+        elif vxs is not None and vys is not None:
+            dx_step = vxs
+            dy_step = vys
+        else:
+            dx_step = np.zeros(n, dtype=np.float32)
+            dy_step = np.zeros(n, dtype=np.float32)
+
+        if d_norms is None:
+            d_norm_f = np.full(n, 215.0, dtype=np.float32)
+        else:
+            d_norm_f = np.maximum(50.0, d_norms)
+
+        tpd = float(self.world_cfg.ticks_per_day)
+        ticks_to_night = max(0.0, (0.74 - tod) * tpd)
+        speeds = max_speeds if max_speeds is not None else np.full(n, 4.2, dtype=np.float32)
+        cruise_speeds = np.maximum(0.5, speeds * 0.75)
+
+        # -------------------------------------------------------------
+        # 1. Exact Home Distance & Diurnal Weights
+        # -------------------------------------------------------------
+        if rel_home_wx is not None and rel_home_wy is not None:
+            d_homes_before = np.sqrt(rel_home_wx * rel_home_wx + rel_home_wy * rel_home_wy)
+            d_homes_after = np.sqrt((rel_home_wx - dx_step) ** 2 + (rel_home_wy - dy_step) ** 2)
+        elif dist_homes is not None:
+            d_homes_before = dist_homes
+            proj_h = dx_step * dx_homes + dy_step * dy_homes
+            d_homes_after = np.maximum(0.0, d_homes_before - proj_h)
+        else:
+            d_homes_before = np.full(n, 300.0, dtype=np.float32)
+            d_homes_after = d_homes_before
+
+        eta_homes = (d_homes_before / cruise_speeds) * 1.3
+        urgency_home = np.where(
+            ticks_to_night <= 0.0,
+            1.0,
+            np.clip(eta_homes / max(1.0, ticks_to_night), 0.0, 1.0)
+        )
+
+        hunger_ratio = np.clip((repro_target - foods_today) / max(0.1, repro_target), 0.0, 1.0)
+        w_home = np.clip((1.0 - hunger_ratio * 0.75) * urgency_home, 0.0, 1.0)
+        w_food = np.clip(hunger_ratio * (1.0 - 0.70 * urgency_home), 0.0, 1.0)
+
+        # -------------------------------------------------------------
+        # 2. Exact Canonical Food PBRS (World Euclidean Distance)
+        # -------------------------------------------------------------
         has_food = prox_food > 0.0
+        if rel_food_wx is not None and rel_food_wy is not None:
+            d_before_food = np.sqrt(rel_food_wx * rel_food_wx + rel_food_wy * rel_food_wy)
+            d_after_food = np.sqrt((rel_food_wx - dx_step) ** 2 + (rel_food_wy - dy_step) ** 2)
+        else:
+            d_before_food = (np.float32(1.0) - prox_food) * d_norm_f
+            if pre_headings is not None:
+                cos_th = np.cos(pre_headings)
+                sin_th = np.sin(pre_headings)
+                rf_wx = cos_th * dx_foods - sin_th * dy_foods
+                rf_wy = sin_th * dx_foods + cos_th * dy_foods
+                vec_fx = d_before_food * rf_wx
+                vec_fy = d_before_food * rf_wy
+                d_after_food = np.sqrt((vec_fx - dx_step) ** 2 + (vec_fy - dy_step) ** 2)
+            else:
+                proj_f = dx_step * dx_foods + dy_step * dy_foods
+                d_after_food = np.maximum(0.0, d_before_food - proj_f)
 
-        approach = np.maximum(0.0, eff_vx * dx_foods + eff_vy * dy_foods)
-        food_reward = (self.prefs.pref_food * 0.068) * approach
+        delta_phi_food = np.where(
+            has_food,
+            (np.minimum(d_before_food, d_norm_f) - np.minimum(d_after_food, d_norm_f)) / d_norm_f,
+            0.0
+        )
+        reward += w_food * (pref_food * 0.045) * delta_phi_food
 
+        # -------------------------------------------------------------
+        # 3. Oasis PBRS & Exploration Signal (when no food is visible)
+        # -------------------------------------------------------------
         local_fertility = oasis_vecs[:, 2]
-        oasis_align = np.maximum(0.0, eff_vx * oasis_vecs[:, 0] + eff_vy * oasis_vecs[:, 1])
-        oasis_reward = np.where(local_fertility < 0.25, pref_exp * 0.052 * oasis_align, 0.0)
-        barren_penalty = np.where(local_fertility < -0.35, -0.008 * pref_exp, 0.0)
-        oasis_reward += barren_penalty
+        d_norm_oasis = np.float32(650.0)
+        if pre_headings is not None:
+            cos_th = np.cos(pre_headings)
+            sin_th = np.sin(pre_headings)
+            ro_wx = cos_th * oasis_vecs[:, 0] - sin_th * oasis_vecs[:, 1]
+            ro_wy = sin_th * oasis_vecs[:, 0] + cos_th * oasis_vecs[:, 1]
+            proj_oasis = dx_step * ro_wx + dy_step * ro_wy
+        else:
+            proj_oasis = dx_step * oasis_vecs[:, 0] + dy_step * oasis_vecs[:, 1]
 
-        reward += np.where(hungry, np.where(has_food, food_reward, oasis_reward), 0.0)
+        delta_phi_oasis = np.clip(proj_oasis / d_norm_oasis, -0.05, 0.05)
+        barren_penalty = np.where(local_fertility < -0.35, -0.002 * pref_exp, 0.0)
+        oasis_reward = np.where(
+            local_fertility < 0.35,
+            pref_exp * 0.025 * delta_phi_oasis + barren_penalty,
+            0.0
+        )
+        reward += np.where(~has_food, w_food * oasis_reward, 0.0)
 
-        # Evening return or sated return home
-        heading_home = (tod >= 0.60) | (~hungry)
-        home_align = np.maximum(0.0, eff_vx * dx_homes + eff_vy * dy_homes)
-        home_reward = np.where(is_at_homes, pref_home * 0.038, pref_home * 0.058 * home_align)
-        reward += np.where(heading_home, home_reward, 0.0)
+        # -------------------------------------------------------------
+        # 4. Exact Canonical Home PBRS
+        # -------------------------------------------------------------
+        d_norm_h = np.maximum(100.0, d_norm_f * 2.0)
+        delta_phi_home = np.where(
+            is_at_homes,
+            0.0,
+            (np.minimum(d_homes_before, d_norm_h) - np.minimum(d_homes_after, d_norm_h)) / d_norm_h
+        )
+        reward += w_home * (pref_home * 0.035) * delta_phi_home
 
         return reward
-
     def _try_colonize_or_relocate(self, blob: Blob, tod: float) -> bool:
         """
         Allow a blob to actively migrate into a better-situated oasis home or pioneer a new home
@@ -2967,10 +3057,12 @@ class SimulationWorld:
 
         self._kin_populated = True
 
+        headings = self._kin_headings[:n_living]
         prep_step_observations_numba(
             obs_batch,
             xs,
             ys,
+            headings,
             home_xs,
             home_ys,
             home_radii_arr,
@@ -3205,9 +3297,20 @@ class SimulationWorld:
             cohort_idx=cohort_idx,
         )
         self.telemetry.record_step_actions(living_blobs, actions_batch, dt)
+        # Record pre-kinematics positions, headings, and home relative vectors for exact canonical PBRS
+        pre_xs = self._kin_xs[:n_living].copy()
+        pre_ys = self._kin_ys[:n_living].copy()
+        pre_headings = self._kin_headings[:n_living].copy()
+        rel_home_wx = self._kin_home_xs[:n_living] - pre_xs
+        rel_home_wy = self._kin_home_ys[:n_living] - pre_ys
+
         speed_norms, hit_rocks = self._apply_kinematics_and_metabolism_batch(
             living_blobs, actions_batch, home_objs, home_radii, night_mode, dt_scale
         )
+
+        # Physical displacement achieved during step
+        disp_xs = self._kin_xs[:n_living] - pre_xs
+        disp_ys = self._kin_ys[:n_living] - pre_ys
 
         base_rewards = self._compute_movement_shaping_reward_batch(
             self._kin_in_swamps[:n_living],
@@ -3225,6 +3328,12 @@ class SimulationWorld:
             vxs=self._kin_vxs[:n_living],
             vys=self._kin_vys[:n_living],
             max_speeds=self._kin_max_speeds[:n_living],
+            disp_xs=disp_xs,
+            disp_ys=disp_ys,
+            d_norms=self._step_eff_visions[:n_living],
+            pre_headings=pre_headings,
+            rel_home_wx=rel_home_wx,
+            rel_home_wy=rel_home_wy,
         )
         scaled_reward_vec = base_rewards * dt_scale
         step_rewards = (scaled_reward_vec * 2.5).astype(np.float32)
@@ -3235,15 +3344,17 @@ class SimulationWorld:
         sprints_arr = (actions_batch[:, 2] + 1.0) * 0.5
         self._kin_sprints[:n_living] = sprints_arr
 
-        # Fast reward accumulation in one single loop pass
+        # Fast reward & kinematic distance accumulation in one single loop pass
         srs = scaled_reward_vec.tolist()
         sps = sprints_arr.tolist()
+        step_dists = np.hypot(disp_xs, disp_ys).tolist()
         for idx in range(n_living):
             b = living_blobs[idx]
             sr = srs[idx]
             b.last_reward = sr
             b.cumulative_reward += sr
             b.sprint_level = sps[idx]
+            b.distance_traveled += step_dists[idx]
 
         # Vectorized colonize candidate detection using true coordinates
         tod_56 = tod >= 0.56
@@ -5099,15 +5210,21 @@ class SimulationWorld:
 
         for b in self.blobs:
             if b.alive and (b.age_days >= 1 or b.children_count >= 1):
+                # Efficiency-normalized scoring (Section 4.5):
+                # 1. Foraging efficiency with physical scale D_0 = 200.0 (prevents zero-movement exploit)
+                foraging_eff = b.food_eaten_lifetime / (b.distance_traveled + 200.0)
+                # 2. Homing success with Laplace smoothing (prevents Day-1 camper inflation)
+                homing_eff = b.days_sheltered / (b.age_days + 2.0)
+
                 s = float(
-                    b.food_eaten_lifetime * 1.6
-                    + b.age_days * 3.0
-                    + b.children_count * 5.0
+                    foraging_eff * 850.0
+                    + homing_eff * 18.0
+                    + b.children_count * 6.5
+                    + b.age_days * 2.5
                     + b.trades_made * 0.8
-                    + b.money * 0.15
+                    + b.money * 0.12
                     + b._reputation * 3.5
                     + b.bounties_won * 1.5
-                    + b.cumulative_reward * 0.4
                 )
                 prev = best_by_id.get(b.id)
                 if prev is None or s > prev[0]:
