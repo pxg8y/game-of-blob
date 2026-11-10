@@ -69,8 +69,12 @@ _umath_clip = np._core.umath.clip
 
 
 def _get_trace_rank_for_dims(dims: List[int]) -> int:
-    """Adaptive rank: rank 13 for standard networks (width <= 512); rank 2 for 10k networks."""
-    return 2 if (len(dims) > 0 and max(dims) > 512) else _TRACE_RANK
+    """Adaptive rank: rank 13 for standard networks (width <= 512); rank 6 for 512 < width <= 4096; rank 2 for 10k networks."""
+    if len(dims) == 0 or max(dims) <= 512:
+        return _TRACE_RANK
+    if max(dims) <= 4096:
+        return 6
+    return 2
 
 
 def apply_activation(x: np.ndarray, kind: str, out: Optional[np.ndarray] = None) -> np.ndarray:
@@ -991,7 +995,6 @@ class BatchedBrainPool:
         if k > 0:
             self._trace_weights_cap[sl, :k] *= decay
         self._trace_weights_cap[sl, k] = one_minus_decay
-        self._accum_coef_cap[sl, k] = _F32_ZERO
 
         delta = out_act * np.maximum(np.float32(0.15), _F32_ONE - out_act * out_act)
         act_code = _ACT_CODE_MAP.get(act_kind, 0)

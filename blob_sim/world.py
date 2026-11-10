@@ -3285,8 +3285,15 @@ class SimulationWorld:
         n_living = len(living_blobs)
 
         brains = [b.brain for b in living_blobs]
-        cohort_idx = self._substep_count % 3
-        do_trace = cohort_idx == 0
+        if self.world_cfg.every_tick_brain:
+            cohort_idx = -1
+            do_trace = True
+        else:
+            cohort_idx = self._substep_count % 3
+            hidden_dims = self.net_cfg.get_hidden_dims()
+            max_dim = max(hidden_dims) if hidden_dims else 0
+            do_trace = (max_dim <= 512) or (cohort_idx == 0)
+
         actions_batch = self._brain_pool.forward_and_trace(
             brains,
             obs_batch,
@@ -3502,7 +3509,7 @@ class SimulationWorld:
                 step_rewards[idx] += living_blobs[idx].pending_rl_reward * 2.5
                 living_blobs[idx].pending_rl_reward = 0.0
 
-        if do_trace or np.any(step_rewards > 0.25) or np.any(step_rewards < -0.25):
+        if self.world_cfg.every_tick_brain or do_trace or np.any(np.abs(step_rewards) > 0.25):
             self._brain_pool.apply_online_learning_batch(
                 brains, step_rewards, self.prefs.learning_rate
             )
