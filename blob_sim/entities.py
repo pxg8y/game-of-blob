@@ -181,6 +181,7 @@ class Genes:
     size: float = 1.0        # Body size, energy reserve & food carrying capacity (0.65 .. 1.60)
     metabolism: float = 1.0  # Efficiency modifier
     hue: float = 195.0       # Individual visual hue when ungrouped
+    sigma_mut: float = 0.05  # Self-adaptive mutation standard deviation (0.01 .. 0.20)
     _basal_cost: float = field(init=False, repr=False, default=0.06)
     _rgb_int: int = field(init=False, repr=False, default=0x38BDF8)
 
@@ -209,13 +210,19 @@ class Genes:
         sense = self.sense if partner is None or rng.random() < 0.5 else partner.sense
         size = self.size if partner is None or rng.random() < 0.5 else partner.size
         hue = self.hue if partner is None or rng.random() < 0.5 else partner.hue
+        parent_sigma = self.sigma_mut if partner is None else (0.65 * self.sigma_mut + 0.35 * partner.sigma_mut)
+
+        # Self-adaptive mutation schedule: log-normal update sigma_child = clip(sigma * exp(tau * N(0, 1)), 0.01, 0.20)
+        tau = 0.15
+        sigma_child = float(np.clip(parent_sigma * np.exp(tau * rng.normal(0.0, 1.0)), 0.01, 0.20))
+        effective_str = sigma_child if mutation_strength <= 0.0 else (0.5 * sigma_child + 0.5 * mutation_strength)
 
         if rng.random() < mutation_rate:
-            speed = float(np.clip(speed + rng.normal(0.0, mutation_strength * 0.8), 0.55, 1.85))
+            speed = float(np.clip(speed + rng.normal(0.0, effective_str * 0.8), 0.55, 1.85))
         if rng.random() < mutation_rate:
-            sense = float(np.clip(sense + rng.normal(0.0, mutation_strength * 0.8), 0.55, 1.85))
+            sense = float(np.clip(sense + rng.normal(0.0, effective_str * 0.8), 0.55, 1.85))
         if rng.random() < mutation_rate:
-            size = float(np.clip(size + rng.normal(0.0, mutation_strength * 0.6), 0.65, 1.60))
+            size = float(np.clip(size + rng.normal(0.0, effective_str * 0.6), 0.65, 1.60))
         if rng.random() < mutation_rate:
             hue = float((hue + rng.normal(0.0, 14.0)) % 360.0)
 
@@ -225,6 +232,7 @@ class Genes:
             size=round(size, 3),
             metabolism=round(float(0.5 * (speed + size)), 3),
             hue=round(hue, 1),
+            sigma_mut=round(sigma_child, 4),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -234,6 +242,7 @@ class Genes:
             "size": self.size,
             "metabolism": self.metabolism,
             "hue": self.hue,
+            "sigma_mut": round(self.sigma_mut, 4),
         }
 
 
@@ -448,6 +457,8 @@ class Blob:
         self.exiles_count: int = 0
         self.migrations_made: int = 0
         self.food_eaten_lifetime: float = 0.0
+        self.distance_traveled: float = 0.0
+        self.days_sheltered: int = 0
         self.cumulative_reward: float = 0.0
         self.last_reward: float = 0.0
         self.pending_rl_reward: float = 0.0

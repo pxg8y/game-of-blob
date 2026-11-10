@@ -242,8 +242,8 @@ class BlobBrain:
             self.last_activations.append(a)
 
         # Backpropagate output sensitivity delta across layers for structurally valid credit assignment
-        decay = np.float32(0.95)
-        one_minus_decay = np.float32(0.05)
+        decay = np.float32(0.98)
+        one_minus_decay = np.float32(0.02)
         out_act = self.last_activations[-1]
         delta = out_act * np.maximum(np.float32(0.15), _F32_ONE - out_act * out_act)
         tw_list = self.traces_w
@@ -274,35 +274,35 @@ class BlobBrain:
             return
 
         r = float(reward)
-        # Decouple dense movement shaping from sparse discrete events
         is_dense = abs(r) <= 0.35
         if abs(r) < 1e-6:
-            # On zero ticks, decay both baselines
-            self.reward_baseline_dense *= 0.96
             self.reward_baseline_event *= 0.96
-            self.reward_baseline = self.reward_baseline_dense + self.reward_baseline_event
+            self.reward_baseline_dense = 0.0
+            self.reward_baseline = self.reward_baseline_event
             return
         elif is_dense:
-            prev_b = self.reward_baseline_dense
-            self.reward_baseline_dense = 0.98 * prev_b + 0.02 * r
-            self.reward_baseline_event *= 0.98
-            cur_baseline = prev_b
+            # Under centered PBRS, F is already zero-mean; b_dense stays 0.0
+            self.reward_baseline_dense = 0.0
+            cur_baseline = 0.0
         else:
             prev_b = self.reward_baseline_event
             self.reward_baseline_event = 0.90 * prev_b + 0.10 * r
-            self.reward_baseline_dense *= 0.98
+            self.reward_baseline_dense = 0.0
             cur_baseline = prev_b
-        self.reward_baseline = self.reward_baseline_dense + self.reward_baseline_event
+        self.reward_baseline = self.reward_baseline_event
 
         if abs(r) < 1e-6:
             return
 
-        if r > 0.0:
-            raw_adv = max(0.25 * r, r - cur_baseline)
-            advantage = min(2.5, max(0.0, raw_adv))
+        if is_dense:
+            advantage = min(2.5, max(-2.5, r))
         else:
-            raw_adv = min(r, r - cur_baseline)
-            advantage = max(-2.5, min(0.0, raw_adv))
+            if r > 0.0:
+                raw_adv = max(0.75 * r, r - cur_baseline)
+                advantage = min(2.5, max(0.0, raw_adv))
+            else:
+                raw_adv = min(r, r - cur_baseline)
+                advantage = max(-2.5, min(0.0, raw_adv))
 
         step = np.float32(learning_rate * advantage * 0.18)
         half_step = np.float32(step * 0.5)
@@ -359,13 +359,13 @@ class BlobBrain:
         mutation_strength: float,
         partner: Optional["BlobBrain"] = None,
     ) -> "BlobBrain":
-        """Create an offspring brain with optional crossover and Gaussian mutation."""
+        """
+        Create an offspring brain with permutation-aligned neuro-crossover (Fix E-7)
+        and Gaussian mutation. Clones arrays before permutation so live brains are never mutated.
+        """
         self._sync_from_pool()
         if partner is not None:
             partner._sync_from_pool()
-
-        new_weights: List[np.ndarray] = []
-        new_biases: List[np.ndarray] = []
 
         can_crossover = (
             partner is not None
@@ -373,33 +373,77 @@ class BlobBrain:
         )
         mut_rate = float(mutation_rate)
         mut_str = float(mutation_strength)
+        num_layers = len(self.weights)
 
-        for idx in range(len(self.weights)):
+        # Cloned copies of parent B weights to prevent in-place mutation of live arrays
+        if can_crossover and partner is not None:
+            aligned_pw = [w.copy() for w in partner.weights]
+            aligned_pb = [b.copy() for b in partner.biases]
+
+            # Bottom-up functional neuron alignment on hidden layers
+            for l in range(num_layers - 1):
+                H = aligned_pb[l].shape[0]
+                # Augmented incoming feature vectors [W; b]
+                feat_a = np.vstack([self.weights[l], self.biases[l][None, :]])  # (rows+1, H)
+                feat_b = np.vstack([aligned_pw[l], aligned_pb[l][None, :]])     # (rows+1, H)
+
+                norm_a = np.linalg.norm(feat_a, axis=0, keepdims=True) + 1e-8
+                norm_b = np.linalg.norm(feat_b, axis=0, keepdims=True) + 1e-8
+                sim_matrix = (feat_a / norm_a).T @ (feat_b / norm_b)  # (H, H)
+
+                # Global-max greedy bipartite matching
+                pi = np.full(H, -1, dtype=np.int32)
+                matched_a = set()
+                matched_b = set()
+                sim_flat = sim_matrix.flatten()
+                sorted_pairs = np.argsort(-sim_flat)
+                for pair_idx in sorted_pairs:
+                    j = pair_idx // H
+                    k = pair_idx % H
+                    if j not in matched_a and k not in matched_b:
+                        pi[j] = k
+                        matched_a.add(j)
+                        matched_b.add(k)
+                        if len(matched_a) == H:
+                            break
+
+                # Apply permutation pi to columns of l, biases of l, and rows of l+1
+                aligned_pw[l] = aligned_pw[l][:, pi]
+                aligned_pb[l] = aligned_pb[l][pi]
+                aligned_pw[l + 1] = aligned_pw[l + 1][pi, :]
+        else:
+            aligned_pw = self.weights
+            aligned_pb = self.biases
+
+        new_weights: List[np.ndarray] = []
+        new_biases: List[np.ndarray] = []
+
+        for idx in range(num_layers):
             w = self.weights[idx]
             b = self.biases[idx]
-
-            if can_crossover and partner is not None:
-                pw = partner.weights[idx]
-                pb = partner.biases[idx]
-                has_partner = True
-            else:
-                pw = w
-                pb = b
-                has_partner = False
+            pw = aligned_pw[idx]
+            pb = aligned_pb[idx]
 
             new_w, new_b = mutate_neural_layer_numba(
-                w, b, pw, pb, has_partner, mut_rate, mut_str
+                w, b, pw, pb, can_crossover, mut_rate, mut_str
             )
             new_weights.append(new_w)
             new_biases.append(new_b)
 
-        return BlobBrain(
+        child = BlobBrain(
             config=self.config,
             weights=new_weights,
             biases=new_biases,
             rng=self.rng,
             _copy_arrays=False,
         )
+        if partner is not None:
+            child.reward_baseline_event = float(0.65 * self.reward_baseline_event + 0.35 * partner.reward_baseline_event)
+        else:
+            child.reward_baseline_event = float(self.reward_baseline_event)
+        child.reward_baseline_dense = 0.0
+        child.reward_baseline = float(child.reward_baseline_event)
+        return child
 
     def adapt_to_config(self, new_config: NetworkConfig) -> "BlobBrain":
         """
@@ -599,20 +643,21 @@ class BatchedBrainPool:
             return
         is_dense = abs(r) <= 0.35
         if is_dense:
-            prev_b = getattr(brain, "reward_baseline_dense", 0.0)
-            brain.reward_baseline_dense = 0.98 * prev_b + 0.02 * r
-            brain.reward_baseline_event = getattr(brain, "reward_baseline_event", 0.0) * 0.98
-            cur_baseline = prev_b
+            brain.reward_baseline_dense = 0.0
+            cur_baseline = 0.0
         else:
             prev_b = getattr(brain, "reward_baseline_event", 0.0)
             brain.reward_baseline_event = 0.90 * prev_b + 0.10 * r
-            brain.reward_baseline_dense = getattr(brain, "reward_baseline_dense", 0.0) * 0.98
+            brain.reward_baseline_dense = 0.0
             cur_baseline = prev_b
-        brain.reward_baseline = brain.reward_baseline_dense + brain.reward_baseline_event
-        if r > 0.0:
-            advantage = min(2.5, max(0.0, 0.25 * r, r - cur_baseline))
+        brain.reward_baseline = brain.reward_baseline_event
+        if is_dense:
+            advantage = min(2.5, max(-2.5, r))
         else:
-            advantage = max(-2.5, min(0.0, r, r - cur_baseline))
+            if r > 0.0:
+                advantage = min(2.5, max(0.0, 0.75 * r, r - cur_baseline))
+            else:
+                advantage = max(-2.5, min(0.0, r, r - cur_baseline))
         step = np.float32(learning_rate * advantage * 0.18)
         half_step = np.float32(step * 0.5)
         active_k = self._ring_ptr
@@ -776,6 +821,10 @@ class BatchedBrainPool:
             self._accum_coef_cap[new_idx] = _F32_ZERO
             self._last_out_cap[new_idx] = _F32_ZERO
             self._out_valid_cap[new_idx] = False
+            # Dual-engine epigenetic parity: preserve br.reward_baseline_event on newborn slot init!
+            # Do NOT reset br.reward_baseline_event to 0.0
+            br.reward_baseline_dense = 0.0
+            br.reward_baseline = getattr(br, "reward_baseline_event", 0.0)
 
         for lay in range(num_layers):
             br.weights[lay] = self._W_cap[lay][new_idx]
@@ -934,8 +983,9 @@ class BatchedBrainPool:
         else:
             k = max(0, self._ring_ptr - 1)
 
-        decay = np.float32(0.95)
-        one_minus_decay = np.float32(0.05)
+        is_strided = cohort_slice is not None
+        decay = np.float32(0.941192 if is_strided else 0.98)
+        one_minus_decay = np.float32(0.058808 if is_strided else 0.02)
         sl = cohort_slice if cohort_slice is not None else slice(0, n)
 
         if k > 0:
@@ -1183,11 +1233,7 @@ class BatchedBrainPool:
         prev_dense = np.fromiter((getattr(br, "reward_baseline_dense", 0.0) for br in brains), dtype=np.float32, count=n)
         prev_event = np.fromiter((getattr(br, "reward_baseline_event", 0.0) for br in brains), dtype=np.float32, count=n)
 
-        new_dense = np.where(
-            zero_mask,
-            np.float32(0.96) * prev_dense,
-            np.where(dense_mask, np.float32(0.98) * prev_dense + np.float32(0.02) * rewards, np.float32(0.98) * prev_dense),
-        )
+        new_dense = np.zeros(n, dtype=np.float32)
         new_event = np.where(
             zero_mask,
             np.float32(0.96) * prev_event,
@@ -1195,11 +1241,11 @@ class BatchedBrainPool:
         )
 
         for i, br in enumerate(brains):
-            br.reward_baseline_dense = float(new_dense[i])
+            br.reward_baseline_dense = 0.0
             br.reward_baseline_event = float(new_event[i])
-            br.reward_baseline = float(new_dense[i] + new_event[i])
+            br.reward_baseline = float(new_event[i])
 
-        baseline_for_adv = np.where(dense_mask, prev_dense, prev_event)
+        baseline_for_adv = np.where(dense_mask, _F32_ZERO, prev_event)
 
         pos_mask = rewards > 1e-6
         neg_mask = rewards < -1e-6
@@ -1209,12 +1255,16 @@ class BatchedBrainPool:
             return
 
         adv = np.zeros_like(rewards, dtype=np.float32)
-        if np.any(pos_mask):
-            raw_pos = np.maximum(np.float32(0.25) * rewards, rewards - baseline_for_adv)
-            adv[pos_mask] = _umath_clip(raw_pos[pos_mask], _F32_ZERO, np.float32(2.5))
-        if np.any(neg_mask):
-            raw_neg = np.minimum(rewards, rewards - baseline_for_adv)
-            adv[neg_mask] = _umath_clip(raw_neg[neg_mask], np.float32(-2.5), _F32_ZERO)
+        if np.any(dense_mask):
+            adv[dense_mask] = _umath_clip(rewards[dense_mask], np.float32(-2.5), np.float32(2.5))
+        event_mask = ~dense_mask
+        if np.any(event_mask):
+            ev_pos = event_mask & pos_mask
+            ev_neg = event_mask & neg_mask
+            if np.any(ev_pos):
+                adv[ev_pos] = _umath_clip(np.maximum(np.float32(0.75) * rewards[ev_pos], rewards[ev_pos] - baseline_for_adv[ev_pos]), _F32_ZERO, np.float32(2.5))
+            if np.any(ev_neg):
+                adv[ev_neg] = _umath_clip(np.minimum(rewards[ev_neg], rewards[ev_neg] - baseline_for_adv[ev_neg]), np.float32(-2.5), _F32_ZERO)
 
         steps = np.float32(learning_rate * 0.18) * adv
         half_steps = np.float32(0.5) * steps

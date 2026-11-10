@@ -782,6 +782,7 @@ def prep_step_observations_numba(
     obs_batch: np.ndarray,
     xs: np.ndarray,
     ys: np.ndarray,
+    headings: np.ndarray,
     home_xs: np.ndarray,
     home_ys: np.ndarray,
     home_radii: np.ndarray,
@@ -801,6 +802,26 @@ def prep_step_observations_numba(
 ) -> None:
     n = len(xs)
     for i in prange(n):
+        th = headings[i]
+        cos_th = np.float32(math.cos(th))
+        sin_th = np.float32(math.sin(th))
+
+        # Egocentric rotation for Food (0, 1), Peer (6, 7), Oasis (16, 17)
+        fx_w = obs_batch[i, 0]
+        fy_w = obs_batch[i, 1]
+        obs_batch[i, 0] = cos_th * fx_w + sin_th * fy_w
+        obs_batch[i, 1] = -sin_th * fx_w + cos_th * fy_w
+
+        px_w = obs_batch[i, 6]
+        py_w = obs_batch[i, 7]
+        obs_batch[i, 6] = cos_th * px_w + sin_th * py_w
+        obs_batch[i, 7] = -sin_th * px_w + cos_th * py_w
+
+        ox_w = obs_batch[i, 16]
+        oy_w = obs_batch[i, 17]
+        obs_batch[i, 16] = cos_th * ox_w + sin_th * oy_w
+        obs_batch[i, 17] = -sin_th * ox_w + cos_th * oy_w
+
         dhx = home_xs[i] - xs[i]
         dhy = home_ys[i] - ys[i]
         d2 = dhx * dhx + dhy * dhy
@@ -822,8 +843,11 @@ def prep_step_observations_numba(
             obs_batch[i, 3] = np.float32(0.0)
             obs_batch[i, 4] = np.float32(0.0)
         else:
-            obs_batch[i, 3] = np.float32(raw_dx * home_gain)
-            obs_batch[i, 4] = np.float32(raw_dy * home_gain)
+            hg_f32 = np.float32(home_gain)
+            raw_hx = np.float32(raw_dx) * hg_f32
+            raw_hy = np.float32(raw_dy) * hg_f32
+            obs_batch[i, 3] = cos_th * raw_hx + sin_th * raw_hy
+            obs_batch[i, 4] = -sin_th * raw_hx + cos_th * raw_hy
 
         dh_norm = dist * inv_900
         obs_batch[i, 5] = np.float32(0.0 if dh_norm >= 1.0 else (1.0 - dh_norm))
@@ -833,7 +857,7 @@ def prep_step_observations_numba(
         obs_batch[i, 13] = np.float32((energies[i] / (85.0 + 15.0 * gene_sizes[i])) * 2.0 - 1.0)
         obs_batch[i, 14] = np.float32(math.tanh(moneys[i] * 0.05))
 
-        # Spatial Memory (Channels 19, 20)
+        # Spatial Memory (Channels 19, 20) in egocentric coordinates
         ms = mem_strengths[i]
         if ms > 0.02:
             dmx = mem_xs[i] - xs[i]
@@ -841,8 +865,10 @@ def prep_step_observations_numba(
             dist_mem = math.hypot(dmx, dmy)
             if dist_mem > 1e-4:
                 inv_dm = ms / dist_mem
-                obs_batch[i, 19] = np.float32(dmx * inv_dm)
-                obs_batch[i, 20] = np.float32(dmy * inv_dm)
+                raw_mx = np.float32(dmx * inv_dm)
+                raw_my = np.float32(dmy * inv_dm)
+                obs_batch[i, 19] = cos_th * raw_mx + sin_th * raw_my
+                obs_batch[i, 20] = -sin_th * raw_mx + cos_th * raw_my
             else:
                 obs_batch[i, 19] = np.float32(0.0)
                 obs_batch[i, 20] = np.float32(0.0)
@@ -907,12 +933,21 @@ def apply_kinematics_and_metabolism_batch_numba(
     n_swamps = len(swamp_x1)
 
     for i in prange(n):
-        mx = actions_batch[i, 0]
-        my = actions_batch[i, 1]
-        mag = math.hypot(mx, my)
+        raw_mx = actions_batch[i, 0]
+        raw_my = actions_batch[i, 1]
+        mag = math.hypot(raw_mx, raw_my)
         if mag > 1.0:
-            mx /= mag
-            my /= mag
+            mx_ego = raw_mx / mag
+            my_ego = raw_my / mag
+        else:
+            mx_ego = raw_mx
+            my_ego = raw_my
+
+        th = headings[i]
+        cos_th = math.cos(th)
+        sin_th = math.sin(th)
+        mx = cos_th * mx_ego - sin_th * my_ego
+        my = sin_th * mx_ego + cos_th * my_ego
 
         sp = (actions_batch[i, 2] + 1.0) * 0.5
         sp_mult = 1.0 + 0.55 * sp
