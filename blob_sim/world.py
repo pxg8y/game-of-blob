@@ -2683,8 +2683,7 @@ class SimulationWorld:
                     self._try_peer_raid(blob, nearest_peer)
 
         if blob.is_at_home and home_obj is not None and blob.trade_cooldown == 0:
-            if self._try_village_market_trade(blob, home_obj):
-                step_reward += self.prefs.pref_money * 0.35
+            self._try_village_market_trade(blob, home_obj)
 
         return step_reward
 
@@ -3355,10 +3354,6 @@ class SimulationWorld:
             if home_obj is not None:
                 blob.trade_desire = float(actions_batch[idx_int, 3])
                 if self._try_village_market_trade(blob, home_obj, groups_with_depot_food=groups_with_depot_food, tod=tod):
-                    bonus = self.prefs.pref_money * 0.35
-                    blob.last_reward += bonus * dt_scale
-                    blob.cumulative_reward += bonus * dt_scale
-                    step_rewards[idx_int] += bonus * (dt_scale * 2.5)
                     hid = home_obj.id
                     if hid < 1024:
                         homes_gold[hid] = home_obj.gold_vault
@@ -3371,7 +3366,7 @@ class SimulationWorld:
                 step_rewards[idx] += living_blobs[idx].pending_rl_reward
                 living_blobs[idx].pending_rl_reward = 0.0
 
-        if do_trace or np.any(step_rewards > 0.25):
+        if do_trace or np.any(step_rewards > 0.25) or np.any(step_rewards < -0.25):
             self._brain_pool.apply_online_learning_batch(
                 brains, step_rewards, self.prefs.learning_rate
             )
@@ -4030,12 +4025,13 @@ class SimulationWorld:
         surv_need: float,
         repro_need: float,
     ) -> float:
+        if seller.food_today < surv_need - 1e-4:
+            # Selling food when hungry/starving threatens survival - heavily penalize
+            return -1.0 * self.prefs.pref_food
         social_bonus = self.prefs.pref_social * 0.25 if same_group else 0.0
         if seller.food_today >= repro_need - 1e-4:
             return self.prefs.pref_money * 0.60 + social_bonus
-        if seller.food_today >= surv_need - 1e-4:
-            return self.prefs.pref_money * 0.22 + social_bonus * 0.5
-        return -0.35 * self.prefs.pref_food
+        return self.prefs.pref_money * 0.22 + social_bonus * 0.5
 
     def _try_peer_trade(self, a: Blob, b: Blob) -> bool:
         """
@@ -4127,7 +4123,9 @@ class SimulationWorld:
 
             seller_reward = self._compute_seller_trade_reward(
                 seller, same_group, surv_need, repro_need
-            ) + 0.08 * self.prefs.pref_social
+            )
+            if seller_reward > 0.0:
+                seller_reward += 0.08 * self.prefs.pref_social
             buyer_reward = self.prefs.pref_money * 0.45 + (
                 self.prefs.pref_food * 0.45 if pre_buy_food < surv_need else self.prefs.pref_food * 0.20
             ) + 0.08 * self.prefs.pref_social
@@ -4428,7 +4426,13 @@ class SimulationWorld:
                     self.groups[blob.group_id].total_trades += 1
                 self.telemetry.on_market_sell(blob, home, unit, sell_price, from_stomach)
                 if blob.food_today < surv_need - 1e-4:
-                    blob.pending_rl_reward -= 0.35 * self.prefs.pref_food
+                    sell_pen = -1.0 * self.prefs.pref_food
+                    blob.cumulative_reward += sell_pen
+                    blob.pending_rl_reward += sell_pen
+                else:
+                    sell_rew = self.prefs.pref_money * 0.35
+                    blob.cumulative_reward += sell_rew
+                    blob.pending_rl_reward += sell_rew
                 return True
 
         if can_buy:
@@ -4451,6 +4455,9 @@ class SimulationWorld:
                     if blob.group_id and blob.group_id in self.groups:
                         self.groups[blob.group_id].total_trades += 1
                     self.telemetry.on_market_buy(blob, depot_home, unit, buy_price)
+                    buy_rew = self.prefs.pref_money * 0.35
+                    blob.cumulative_reward += buy_rew
+                    blob.pending_rl_reward += buy_rew
                     return True
 
         return False
