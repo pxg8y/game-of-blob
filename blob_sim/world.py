@@ -577,7 +577,10 @@ class SimulationWorld:
             and any(w > 256 for w in self.net_cfg.get_hidden_dims())
         )
         if use_pool_prealloc:
-            layer_dims = [INPUT_DIM] + self.net_cfg.get_hidden_dims() + [OUTPUT_DIM]
+            rec_dim = self.net_cfg.get_recurrent_dim()
+            in_dim = INPUT_DIM + rec_dim
+            out_dim = OUTPUT_DIM + rec_dim
+            layer_dims = [in_dim] + self.net_cfg.get_hidden_dims() + [out_dim]
             self._brain_pool._allocate_capacity(layer_dims, initial_n)
             num_layers = len(layer_dims) - 1
 
@@ -6087,6 +6090,7 @@ class SimulationWorld:
                 width=nc.get("width", 24),
                 custom_layers=nc.get("custom_layers"),
                 activation=nc.get("activation", "tanh"),
+                recurrent_dim=nc.get("recurrent_dim", 0),
             )
         if "prefs" in data:
             for k, v in data["prefs"].items():

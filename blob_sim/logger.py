@@ -897,7 +897,7 @@ class SimulationTelemetryLogger:
             velocity_daily = float(np.linalg.norm(full_mean_flat - self._prev_mean_flat))
         self._prev_mean_flat = full_mean_flat.copy()
 
-        # Compute Effective 24x6 Sensor-to-Action Coupling Matrix
+        # Compute Effective Sensor-to-Action Coupling Matrix
         # Signed product W_0 @ W_1 @ ... @ W_{L-1} and RMS magnitude product
         m_signed = mean_weights_per_layer[0].astype(np.float64)
         m_abs = np.abs(mean_weights_per_layer[0]).astype(np.float64)
@@ -906,6 +906,11 @@ class SimulationTelemetryLogger:
             scale = 1.0 / math.sqrt(max(1, w_next.shape[0]))
             m_signed = (m_signed @ w_next) * scale
             m_abs = (m_abs @ np.abs(w_next)) * scale
+
+        # Slice to standard sensory and motor block (26x6) if recurrent units are present
+        if m_signed.shape[0] > len(INPUT_LABELS) or m_signed.shape[1] > len(OUTPUT_LABELS):
+            m_signed = m_signed[:len(INPUT_LABELS), :len(OUTPUT_LABELS)]
+            m_abs = m_abs[:len(INPUT_LABELS), :len(OUTPUT_LABELS)]
 
         coupling_matrix = np.round(m_signed, 3).tolist()
         if self._initial_coupling_matrix is None:

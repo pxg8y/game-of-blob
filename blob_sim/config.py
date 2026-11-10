@@ -11,6 +11,7 @@ class NetworkConfig:
     width: int = 24  # Neurons per hidden layer (4..10000)
     custom_layers: Optional[List[int]] = None  # Optional explicit layer widths e.g. [32, 16]
     activation: str = "tanh"  # 'tanh', 'relu', 'gelu', 'silu'
+    recurrent_dim: int = 0  # Number of recurrent working memory units (0..64)
 
     def get_hidden_dims(self) -> List[int]:
         if self.custom_layers and len(self.custom_layers) > 0:
@@ -19,12 +20,16 @@ class NetworkConfig:
         w = max(4, min(10000, int(self.width)))
         return [w] * d
 
+    def get_recurrent_dim(self) -> int:
+        return max(0, min(64, int(self.recurrent_dim)))
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "depth": self.depth,
             "width": self.width,
             "custom_layers": self.custom_layers,
             "activation": self.activation,
+            "recurrent_dim": self.get_recurrent_dim(),
             "hidden_dims": self.get_hidden_dims(),
         }
 

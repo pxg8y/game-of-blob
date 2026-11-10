@@ -133,6 +133,7 @@ class SimulationController:
         depth = int(msg.get("depth", self.world.net_cfg.depth))
         width = int(msg.get("width", self.world.net_cfg.width))
         activation = str(msg.get("activation", self.world.net_cfg.activation)).lower()
+        recurrent_dim = int(msg.get("recurrent_dim", getattr(self.world.net_cfg, "recurrent_dim", 0)))
         custom_str = str(msg.get("custom_layers", "")).strip()
         custom_layers = None
         if custom_str:
@@ -149,6 +150,7 @@ class SimulationController:
             width=width,
             custom_layers=custom_layers,
             activation=activation,
+            recurrent_dim=recurrent_dim,
         )
         self.world.update_network_architecture(new_cfg, reset_weights=reset_weights)
         return {"ok": True, "net_cfg": new_cfg.to_dict()}
