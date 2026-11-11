@@ -79,7 +79,35 @@ class SimulationWorld:
         seed: Optional[int] = 42,
     ) -> None:
         self.world_cfg = world_cfg or WorldConfig()
-        self.net_cfg = net_cfg or NetworkConfig()
+        if net_cfg is None:
+            if getattr(self.world_cfg, "scale_preset", "") == "alife_emergent":
+                self.net_cfg = NetworkConfig(
+                    depth=2,
+                    width=48,
+                    recurrent_dim=16,
+                    baldwin_plasticity=True,
+                    activation="tanh",
+                )
+            else:
+                self.net_cfg = NetworkConfig()
+        else:
+            if (
+                getattr(self.world_cfg, "scale_preset", "") == "alife_emergent"
+                and net_cfg.depth == 2
+                and net_cfg.width == 24
+                and net_cfg.get_recurrent_dim() == 0
+                and not net_cfg.baldwin_plasticity
+                and not net_cfg.custom_layers
+            ):
+                self.net_cfg = NetworkConfig(
+                    depth=2,
+                    width=48,
+                    recurrent_dim=16,
+                    baldwin_plasticity=True,
+                    activation="tanh",
+                )
+            else:
+                self.net_cfg = net_cfg
         self.prefs = prefs or TrainingPreferences()
         self.rng = np.random.default_rng(seed)
         if seed is not None:
@@ -1180,11 +1208,202 @@ class SimulationWorld:
 
         self._rebuild_obstacle_arrays()
 
+    def _generate_alife_emergent_topography(self) -> None:
+        """
+        Generate open, natural topography for the 8000x6000 'alife_emergent' world:
+        - Zone 0: The Central Cradle Basin (0 <= r < 1400):
+          Flat, smooth ground with 6 inner cradle oases. Zero rock obstacles.
+        - Zone 1: Transition Prairie (1400 <= r < 2600):
+          10 radial convex rock guideposts with generous clearance (>350 units).
+        - Zone 2: Frontier Biomes (2600 <= r < 4000):
+          10 outer frontier oases (Golden Groves & Thermal Springs),
+          8 outer boundary rock formations, and 6 mud swamps off-axis.
+        Total: 16 oases, 18 rocks, 6 swamps.
+        """
+        W, H = self.world_cfg.width, self.world_cfg.height
+        cx, cy = W * 0.5, H * 0.5
+        paradigm = self.get_active_paradigm()
+        cradle_fert = float(paradigm.get("cradle_fertility", 1.0))
+        if paradigm["id"] == "curriculum":
+            cradle_fert = 1.0
+        init_pressure = 2.1 if paradigm["id"] == "rapid_exodus" else 0.0
+
+        self.map_zones = [
+            {
+                "id": "cradle",
+                "name": "ZONE 0 · SANCTUARY (Emergent Cradle Basin)",
+                "cx": round(cx, 1),
+                "cy": round(cy, 1),
+                "rx": 1400.0,
+                "ry": 1400.0,
+            },
+            {
+                "id": "canyon",
+                "name": "ZONE 1 · TRANSITION RING (Convex Guideposts)",
+                "cx": round(cx, 1),
+                "cy": round(cy, 1),
+                "rx": 2600.0,
+                "ry": 2600.0,
+            },
+            {
+                "id": "frontier",
+                "name": "ZONE 2 · FRONTIER BIOMES (Wilderness & Marshes)",
+                "cx": round(cx, 1),
+                "cy": round(cy, 1),
+                "rx": 3900.0,
+                "ry": 2900.0,
+            },
+        ]
+        self.skill_gates = []
+        self.cradle_centers = [(cx, cy, 1400.0, 1400.0)]
+
+        # 1. ZONE 0: 6 Inner Cradle Oases in hexagonal ring around center
+        inner_oasis_specs = [
+            ("Wiegen-Quell Nord", cx, cy - 550.0),
+            ("Wiegen-Quell Süd", cx, cy + 550.0),
+            ("Wiegen-Quell NE", cx + 480.0, cy - 280.0),
+            ("Wiegen-Quell NW", cx - 480.0, cy - 280.0),
+            ("Wiegen-Quell SE", cx + 480.0, cy + 280.0),
+            ("Wiegen-Quell SW", cx - 480.0, cy + 280.0),
+        ]
+        for name, ox, oy in inner_oasis_specs:
+            oid = self._next_oasis_id
+            self._next_oasis_id += 1
+            rad = 240.0
+            self.oases[oid] = OasisNode(
+                id=oid,
+                name=name,
+                x=float(ox),
+                y=float(oy),
+                radius=rad,
+                fertility=cradle_fert,
+                max_capacity=120,
+                harvest_pressure=init_pressure,
+                biome="cradle",
+                ring="inner",
+                depletion_rate=0.85,
+                recovery_rate=0.65,
+                cradle_id=1,
+            )
+
+        # 2. ZONE 1: 10 Radial Convex Rock Guideposts along r = 2000 with >350 unit clearance
+        r_boulder = 2000.0
+        for i in range(10):
+            ang = (math.pi / 10.0) + (i * 2.0 * math.pi / 10.0)
+            bx = cx + math.cos(ang) * r_boulder
+            by = cy + math.sin(ang) * r_boulder
+            tx = -math.sin(ang)
+            ty = math.cos(ang)
+            half_len = 50.0
+            self._add_obstacle(
+                "rock",
+                bx - tx * half_len,
+                by - ty * half_len,
+                bx + tx * half_len,
+                by + ty * half_len,
+                24.0,
+                gate_kind="guidepost",
+            )
+            self.skill_gates.append(
+                {
+                    "kind": "guidepost",
+                    "label": f"Fels-Leitpfosten #{i + 1}",
+                    "x": round(bx, 1),
+                    "y": round(by, 1),
+                }
+            )
+
+        # 3. ZONE 2: 10 Frontier Oases (6 Golden Groves + 4 Thermal Springs)
+        frontier_specs = [
+            ("gold_grove", "Sonnen-Hain NE", cx + 2400.0, cy - 1700.0, 260.0),
+            ("gold_grove", "Bernstein-Hain NW", cx - 2400.0, cy - 1700.0, 260.0),
+            ("gold_grove", "Gold-Lagune SE", cx + 2400.0, cy + 1700.0, 260.0),
+            ("gold_grove", "Sternen-Hain SW", cx - 2400.0, cy + 1700.0, 260.0),
+            ("gold_grove", "Pionier-Oase Ost", cx + 3100.0, cy, 260.0),
+            ("gold_grove", "Pionier-Oase West", cx - 3100.0, cy, 260.0),
+            ("thermal_spring", "Smaragd-Therme Nord", cx, cy - 2300.0, 250.0),
+            ("thermal_spring", "Kristall-Geysir Süd", cx, cy + 2300.0, 250.0),
+            ("thermal_spring", "Jade-Therme Ober-Nord", cx + 1300.0, cy - 2400.0, 250.0),
+            ("thermal_spring", "Nebel-Geysir Unter-Süd", cx - 1300.0, cy + 2400.0, 250.0),
+        ]
+        for b_kind, o_name, ox, oy, rad in frontier_specs:
+            oid = self._next_oasis_id
+            self._next_oasis_id += 1
+            cap = 140 if b_kind == "gold_grove" else 115
+            self.oases[oid] = OasisNode(
+                id=oid,
+                name=o_name,
+                x=float(np.clip(ox, rad + 60.0, W - rad - 60.0)),
+                y=float(np.clip(oy, rad + 60.0, H - rad - 60.0)),
+                radius=rad,
+                fertility=1.0,
+                max_capacity=cap,
+                biome=b_kind,
+                ring="outer",
+                depletion_rate=0.72,
+                recovery_rate=1.22,
+                cradle_id=0,
+            )
+
+        # 4. ZONE 2: 8 Outer Boundary Rock Formations (making 10 + 8 = 18 rocks)
+        outer_rock_angles = [i * 2.0 * math.pi / 8.0 for i in range(8)]
+        r_outer_rock_x = 3400.0
+        r_outer_rock_y = 2500.0
+        for idx, ang in enumerate(outer_rock_angles):
+            rx_mid = cx + math.cos(ang) * r_outer_rock_x
+            ry_mid = cy + math.sin(ang) * r_outer_rock_y
+            tx = -math.sin(ang)
+            ty = math.cos(ang)
+            half_len = 65.0
+            self._add_obstacle(
+                "rock",
+                rx_mid - tx * half_len,
+                ry_mid - ty * half_len,
+                rx_mid + tx * half_len,
+                ry_mid + ty * half_len,
+                26.0,
+                gate_kind="outer_boundary_rock",
+            )
+            self.skill_gates.append(
+                {
+                    "kind": "guidepost",
+                    "label": f"Grenz-Fels #{idx + 1}",
+                    "x": round(rx_mid, 1),
+                    "y": round(ry_mid, 1),
+                }
+            )
+
+        # 5. ZONE 2 Hazards: 6 Mud Swamps off-axis
+        swamp_offsets = [
+            (cx + 1700.0, cy - 1900.0),
+            (cx - 1700.0, cy - 1900.0),
+            (cx + 1700.0, cy + 1900.0),
+            (cx - 1700.0, cy + 1900.0),
+            (cx + 2700.0, cy - 800.0),
+            (cx - 2700.0, cy + 800.0),
+        ]
+        for sx_mid, sy_mid in swamp_offsets:
+            self._add_obstacle(
+                "swamp",
+                sx_mid - 40.0,
+                sy_mid - 30.0,
+                sx_mid + 40.0,
+                sy_mid + 30.0,
+                90.0,
+                gate_kind="outer_swamp",
+            )
+
+        self._rebuild_obstacle_arrays()
+
     def _generate_world_topography(self) -> None:
         """
         Generate the Concentric Evolutionary Training Map ('Cradle-to-Frontier') for single-cradle maps,
         or the Multi-Cradle Continental Region Network when `num_cradles > 1`.
         """
+        if getattr(self.world_cfg, "scale_preset", "") == "alife_emergent":
+            self._generate_alife_emergent_topography()
+            return
+
         if getattr(self.world_cfg, "scale_preset", "") == "training_kindergarten":
             self._generate_kindergarten_topography()
             return
@@ -6324,6 +6543,16 @@ class SimulationWorld:
             }
 
         # Vectorized Blob Packing (Feature 16) with optional Viewport Culling (Feature 17)
+        use_emergent_signals = bool(getattr(self.world_cfg, "emergent_interactions", False))
+        neg_th = -0.45 if use_emergent_signals else -0.35
+        pos_th = 0.45 if use_emergent_signals else 0.35
+        if use_emergent_signals:
+            if getattr(self, "_kin_signals", None) is None or len(self._kin_signals) < n_blobs:
+                self._kin_signals = np.zeros(max(n_blobs, 64), dtype=np.float32)
+            source_metric = self._kin_signals
+        else:
+            source_metric = self._kin_reputations
+
         if viewport is not None and n_blobs > 0:
             min_x, min_y, max_x, max_y = viewport
             xs = self._kin_xs[:n_blobs]
@@ -6348,8 +6577,10 @@ class SimulationWorld:
                     self._kin_in_swamps[vis_idx],
                     self._kin_surplus_foods[vis_idx],
                     self._kin_sprints[vis_idx],
-                    self._kin_reputations[vis_idx],
+                    source_metric[vis_idx],
                     n_blobs_packed,
+                    neg_th,
+                    pos_th,
                 )
             else:
                 rep_sum = 0.0
@@ -6374,8 +6605,10 @@ class SimulationWorld:
                     self._kin_in_swamps,
                     self._kin_surplus_foods,
                     self._kin_sprints,
-                    self._kin_reputations,
+                    source_metric,
                     n_blobs_packed,
+                    neg_th,
+                    pos_th,
                 )
             else:
                 rep_sum = 0.0

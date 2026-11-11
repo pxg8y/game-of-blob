@@ -1483,6 +1483,8 @@ def pack_binary_blobs_kernel(
     sprints: np.ndarray,          # (N,) float32
     reputations: np.ndarray,      # (N,) float32
     n_blobs: int,
+    neg_thresh: float = -0.35,
+    pos_thresh: float = 0.35,
 ) -> Tuple[float, int, int]:
     """
     High-throughput Numba kernel packing living blobs into the 8-column float32 WebSocket buffer.
@@ -1503,8 +1505,8 @@ def pack_binary_blobs_kernel(
         )
         rep = reputations[i]
         rep_sum += rep
-        is_outlaw = rep <= -0.35
-        is_honorable = rep >= 0.35
+        is_outlaw = rep <= neg_thresh
+        is_honorable = rep >= pos_thresh
         if is_outlaw:
             outlaw_count += 1
         elif is_honorable:

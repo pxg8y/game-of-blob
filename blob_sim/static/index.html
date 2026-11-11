@@ -80,6 +80,21 @@
           <input type="range" id="sliderNetWidth" min="4" max="96" step="4" value="24" />
         </div>
 
+        <div class="control-row">
+          <div class="control-label">
+            <span>Rekurrentes Gedächtnis (Neuronen)</span>
+            <span class="control-val" id="valRecurrentDim">0</span>
+          </div>
+          <input type="range" id="sliderRecurrentDim" min="0" max="64" step="4" value="0" />
+        </div>
+
+        <div class="control-row">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem;">
+            <input type="checkbox" id="chkBaldwin" />
+            <span>Baldwin-Plastizität (Angeboren + Plastisch)</span>
+          </label>
+        </div>
+
         <div class="input-grid-2">
           <div class="control-row">
             <div class="control-label"><span>Aktivierung</span></div>
@@ -187,6 +202,7 @@
             <span>Welt-Skalierung (Multi-Cradle Topographie)</span>
           </div>
           <select class="select-input" id="selectScalePreset">
+            <option value="alife_emergent">🧬 Emergent ALife (8.000×6.000 · Kontinuierliche Biologie &amp; Gedächtnis)</option>
             <option value="training_kindergarten">🌱 Kindergarten (4.800×3.600 · Perfekte Trainings-Arena)</option>
             <option value="continent" selected>🌍 Kontinent (40.000×30.000 · 12 Wiegen · bis 20k Blobs)</option>
             <option value="regional">🏔️ Regional (16.000×12.000 · 6 Wiegen · bis 8k Blobs)</option>
