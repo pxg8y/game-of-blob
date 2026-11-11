@@ -130,10 +130,10 @@ class SimulationController:
         return {"ok": True, "selected_blob_id": self.world.selected_blob_id}
 
     def _cmd_update_network(self, msg: Dict[str, Any]) -> Dict[str, Any]:
-        depth = int(msg.get("depth", self.world.net_cfg.depth))
-        width = int(msg.get("width", self.world.net_cfg.width))
+        depth = max(1, min(6, int(msg.get("depth", self.world.net_cfg.depth))))
+        width = max(4, min(10000, int(msg.get("width", self.world.net_cfg.width))))
         activation = str(msg.get("activation", self.world.net_cfg.activation)).lower()
-        recurrent_dim = int(msg.get("recurrent_dim", getattr(self.world.net_cfg, "recurrent_dim", 0)))
+        recurrent_dim = max(0, min(64, int(msg.get("recurrent_dim", getattr(self.world.net_cfg, "recurrent_dim", 0)))))
         baldwin_plasticity = bool(msg.get("baldwin_plasticity", getattr(self.world.net_cfg, "baldwin_plasticity", False)))
         custom_str = str(msg.get("custom_layers", "")).strip()
         custom_layers = None
@@ -171,7 +171,32 @@ class SimulationController:
         preset_key = "scale_preset" if "scale_preset" in w_data else ("preset" if "preset" in w_data else None)
         if preset_key is not None:
             new_preset = str(w_data[preset_key]).strip().lower()
-            if new_preset in WORLD_SCALE_PRESETS and new_preset != getattr(wcfg, "scale_preset", None):
+            old_preset = getattr(wcfg, "scale_preset", None)
+            if new_preset in WORLD_SCALE_PRESETS and new_preset != old_preset:
+                if new_preset == "alife_emergent":
+                    self.world.net_cfg = NetworkConfig(
+                        depth=2,
+                        width=48,
+                        recurrent_dim=16,
+                        baldwin_plasticity=True,
+                        activation="tanh",
+                    )
+                elif old_preset == "alife_emergent":
+                    cur_net = self.world.net_cfg
+                    if (
+                        cur_net.depth == 2
+                        and cur_net.width == 48
+                        and cur_net.get_recurrent_dim() == 16
+                        and cur_net.baldwin_plasticity
+                        and not cur_net.custom_layers
+                    ):
+                        self.world.net_cfg = NetworkConfig(
+                            depth=2,
+                            width=24,
+                            recurrent_dim=0,
+                            baldwin_plasticity=False,
+                            activation="tanh",
+                        )
                 wcfg.apply_scale_preset(new_preset)
                 preset_changed = True
         if "daily_food_spawn" in w_data and not preset_changed:
@@ -262,10 +287,35 @@ class SimulationController:
             if cmd == "set_scale_preset":
                 preset_val = msg.get("scale_preset", msg.get("preset", "continent"))
                 preset = str(preset_val).strip().lower()
+                old_preset = getattr(self.world.world_cfg, "scale_preset", None)
                 if preset in WORLD_SCALE_PRESETS:
+                    if preset == "alife_emergent":
+                        self.world.net_cfg = NetworkConfig(
+                            depth=2,
+                            width=48,
+                            recurrent_dim=16,
+                            baldwin_plasticity=True,
+                            activation="tanh",
+                        )
+                    elif old_preset == "alife_emergent":
+                        cur_net = self.world.net_cfg
+                        if (
+                            cur_net.depth == 2
+                            and cur_net.width == 48
+                            and cur_net.get_recurrent_dim() == 16
+                            and cur_net.baldwin_plasticity
+                            and not cur_net.custom_layers
+                        ):
+                            self.world.net_cfg = NetworkConfig(
+                                depth=2,
+                                width=24,
+                                recurrent_dim=0,
+                                baldwin_plasticity=False,
+                                activation="tanh",
+                            )
                     self.world.world_cfg.apply_scale_preset(preset)
                     self.world.reset_world()
-                return {"ok": True, "world_cfg": self.world.world_cfg.to_dict()}
+                return {"ok": True, "world_cfg": self.world.world_cfg.to_dict(), "net_cfg": self.world.net_cfg.to_dict()}
 
             if cmd == "set_viewport":
                 enabled = bool(msg.get("enabled", False))

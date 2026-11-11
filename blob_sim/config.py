@@ -154,6 +154,30 @@ WORLD_SCALE_PRESETS: Dict[str, Dict[str, Any]] = {
         "num_swamps": 64,
         "min_population_floor": 160,
     },
+    "alife_emergent": {
+        "id": "alife_emergent",
+        "label": "🧬 Emergent ALife (8.000×6.000 · Kontinuierliche Biologie & Gedächtnis)",
+        "short_desc": "Vollständiges Emergent-ALife-System: Jeder Tick ein Gehirn-Durchlauf, egozentrische Sensorik, intrinsische Homöostase, kontinuierlicher Lebenszyklus & physikalische Interaktionen.",
+        "width": 8000.0,
+        "height": 6000.0,
+        "num_cradles": 1,
+        "initial_blobs": 350,
+        "daily_food_spawn": 750,
+        "max_population_cap": 4000,
+        "max_homes_cap": 320,
+        "max_groups_cap": 48,
+        "num_oases": 16,
+        "num_rock_formations": 18,
+        "num_swamps": 6,
+        "min_population_floor": 30,
+        "ticks_per_day": 600,
+        "daylight_ratio": 0.68,
+        "every_tick_brain": True,
+        "egocentric_frame": True,
+        "intrinsic_homeostasis": True,
+        "continuous_lifecycle": True,
+        "emergent_interactions": True,
+    },
 }
 
 
@@ -208,6 +232,8 @@ class WorldConfig:
         self.intrinsic_homeostasis = bool(preset.get("intrinsic_homeostasis", False))
         self.continuous_lifecycle = bool(preset.get("continuous_lifecycle", False))
         self.emergent_interactions = bool(preset.get("emergent_interactions", False))
+        if "ticks_per_day" in preset:
+            self.ticks_per_day = int(preset["ticks_per_day"])
         if "daylight_ratio" in preset:
             self.daylight_ratio = float(preset["daylight_ratio"])
         if "max_starvation_ticks" in preset:

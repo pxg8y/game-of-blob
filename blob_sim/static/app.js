@@ -576,23 +576,37 @@
   // Neural Network Depth & Width Sliders
   const sliderNetDepth = document.getElementById("sliderNetDepth");
   const sliderNetWidth = document.getElementById("sliderNetWidth");
+  const sliderRecurrentDim = document.getElementById("sliderRecurrentDim");
+  const chkBaldwin = document.getElementById("chkBaldwin");
   const selectActivation = document.getElementById("selectActivation");
   const inputCustomLayers = document.getElementById("inputCustomLayers");
 
-  sliderNetDepth.addEventListener("input", () => {
-    document.getElementById("valNetDepth").textContent = sliderNetDepth.value;
-  });
-  sliderNetWidth.addEventListener("input", () => {
-    document.getElementById("valNetWidth").textContent = sliderNetWidth.value;
-  });
+  if (sliderNetDepth) {
+    sliderNetDepth.addEventListener("input", () => {
+      document.getElementById("valNetDepth").textContent = sliderNetDepth.value;
+    });
+  }
+  if (sliderNetWidth) {
+    sliderNetWidth.addEventListener("input", () => {
+      document.getElementById("valNetWidth").textContent = sliderNetWidth.value;
+    });
+  }
+  if (sliderRecurrentDim) {
+    sliderRecurrentDim.addEventListener("input", () => {
+      const vEl = document.getElementById("valRecurrentDim");
+      if (vEl) vEl.textContent = sliderRecurrentDim.value;
+    });
+  }
 
   function applyNetworkConfig(resetWeights) {
     sendCommand({
       cmd: "update_network",
-      depth: parseInt(sliderNetDepth.value, 10),
-      width: parseInt(sliderNetWidth.value, 10),
-      activation: selectActivation.value,
-      custom_layers: inputCustomLayers.value,
+      depth: parseInt(sliderNetDepth ? sliderNetDepth.value : 2, 10),
+      width: parseInt(sliderNetWidth ? sliderNetWidth.value : 24, 10),
+      activation: selectActivation ? selectActivation.value : "tanh",
+      custom_layers: inputCustomLayers ? inputCustomLayers.value : "",
+      recurrent_dim: sliderRecurrentDim ? parseInt(sliderRecurrentDim.value, 10) : 0,
+      baldwin_plasticity: chkBaldwin ? chkBaldwin.checked : false,
       reset_weights: resetWeights,
     });
   }
@@ -805,6 +819,30 @@
         }
       });
     }
+
+    if (state.net_cfg) {
+      if (sliderNetDepth && typeof state.net_cfg.depth === "number" && document.activeElement !== sliderNetDepth) {
+        sliderNetDepth.value = String(state.net_cfg.depth);
+        const el = document.getElementById("valNetDepth");
+        if (el) el.textContent = String(state.net_cfg.depth);
+      }
+      if (sliderNetWidth && typeof state.net_cfg.width === "number" && document.activeElement !== sliderNetWidth) {
+        sliderNetWidth.value = String(state.net_cfg.width);
+        const el = document.getElementById("valNetWidth");
+        if (el) el.textContent = String(state.net_cfg.width);
+      }
+      if (sliderRecurrentDim && typeof state.net_cfg.recurrent_dim === "number" && document.activeElement !== sliderRecurrentDim) {
+        sliderRecurrentDim.value = String(state.net_cfg.recurrent_dim);
+        const el = document.getElementById("valRecurrentDim");
+        if (el) el.textContent = String(state.net_cfg.recurrent_dim);
+      }
+      if (chkBaldwin && typeof state.net_cfg.baldwin_plasticity === "boolean" && document.activeElement !== chkBaldwin) {
+        chkBaldwin.checked = Boolean(state.net_cfg.baldwin_plasticity);
+      }
+      if (selectActivation && state.net_cfg.activation && document.activeElement !== selectActivation) {
+        selectActivation.value = state.net_cfg.activation;
+      }
+    }
   }
 
   function renderGroupListSafe(groups) {
@@ -959,9 +997,11 @@
     }
     lastHeavyUiUpdateTime = now;
 
-    // Network badge (26 inputs -> hidden_dims -> 6 outputs)
+    // Network badge (26 inputs (+recurrent Mem) -> hidden_dims -> 6 outputs)
     if (state.net_cfg && state.net_cfg.hidden_dims) {
-      const dims = [26, ...state.net_cfg.hidden_dims, 6];
+      const recDim = state.net_cfg.recurrent_dim || 0;
+      const inStr = recDim > 0 ? `26 (+${recDim} Mem)` : "26";
+      const dims = [inStr, ...state.net_cfg.hidden_dims, 6];
       document.getElementById("netTopologyBadge").textContent = dims.join(" → ");
     }
 
