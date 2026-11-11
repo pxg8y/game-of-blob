@@ -742,6 +742,11 @@ class SimulationTelemetryLogger:
                 "age_days": {"mean": 0.0, "max": 0, "p90": 0.0},
                 "money": {"mean": 0.0, "p50": 0.0, "p90": 0.0, "max": 0.0, "total": 0.0},
                 "reputation": {"mean": 0.0, "p10": 0.0, "p50": 0.0, "p90": 0.0, "min": 0.0, "max": 0.0, "outlaws": 0, "honorable": 0},
+                "drive_energy": {"mean": 1.0, "std": 0.0, "p10": 1.0, "p50": 1.0, "p90": 1.0, "min": 1.0, "max": 1.0},
+                "drive_pain": {"mean": 1.0, "std": 0.0, "p10": 1.0, "p50": 1.0, "p90": 1.0, "min": 1.0, "max": 1.0},
+                "drive_social": {"mean": 0.3, "std": 0.0, "p10": 0.3, "p50": 0.3, "p90": 0.3, "min": 0.3, "max": 0.3},
+                "plasticity_lr": {"mean": 1.0, "std": 0.0, "p10": 1.0, "p50": 1.0, "p90": 1.0, "min": 1.0, "max": 1.0},
+                "sigma_mut": {"mean": 0.05, "std": 0.0, "p10": 0.05, "p50": 0.05, "p90": 0.05, "min": 0.05, "max": 0.05},
             }
 
         # Sample up to 256 blobs evenly if population is large to accelerate midnight snapshot
@@ -762,6 +767,11 @@ class SimulationTelemetryLogger:
         ages = np.fromiter((b.age_days for b in sampled), dtype=np.int32, count=m)
         moneys = np.fromiter((b.money for b in sampled), dtype=np.float32, count=m)
         reps = np.fromiter((b.reputation for b in sampled), dtype=np.float32, count=m)
+        drive_e = np.fromiter((b.genes.drive_energy for b in sampled), dtype=np.float32, count=m)
+        drive_p = np.fromiter((b.genes.drive_pain for b in sampled), dtype=np.float32, count=m)
+        drive_s = np.fromiter((b.genes.drive_social for b in sampled), dtype=np.float32, count=m)
+        plas_lr = np.fromiter((b.genes.plasticity_lr for b in sampled), dtype=np.float32, count=m)
+        sig_mut = np.fromiter((b.genes.sigma_mut for b in sampled), dtype=np.float32, count=m)
 
         def _dist(arr: np.ndarray, decimals: int = 3) -> Dict[str, float]:
             p10, p50, p90 = np.percentile(arr, [10, 50, 90])
@@ -807,6 +817,11 @@ class SimulationTelemetryLogger:
                 "total": round(float(np.sum(moneys)) * scale_factor, 1),
             },
             "reputation": rep_dist,
+            "drive_energy": _dist(drive_e, 3),
+            "drive_pain": _dist(drive_p, 3),
+            "drive_social": _dist(drive_s, 3),
+            "plasticity_lr": _dist(plas_lr, 3),
+            "sigma_mut": _dist(sig_mut, 3),
         }
 
     def _compute_neural_weight_stats(self, living: List["Blob"]) -> Dict[str, Any]:

@@ -579,27 +579,25 @@ class BlobBrain:
         child.reward_baseline = float(child.reward_baseline_event)
         return child
 
-    def adapt_to_config(self, new_config: NetworkConfig) -> "BlobBrain":
-        """
-        Adapt this brain to a new user-defined depth/width configuration,
-        preserving overlapping sub-matrices of weights so learned behavior is not lost.
-        Cleanly copies sensor block [:26] and motor block [:6].
-        """
-        self._sync_from_pool()
-        adapted = BlobBrain(config=new_config, rng=self.rng)
-        num_old = len(self.weights)
-        num_new = len(adapted.weights)
-
-        # Map layer weights
-        # For intermediate layers (1 to min(num_old, num_new) - 2): direct overlapping block copy
-        # For first layer (0): copy sensor block [:INPUT_DIM] and recurrent block if any
-        # For last layer: copy motor block [:OUTPUT_DIM]
+    def _copy_overlapping_layers(
+        self,
+        src_weights: List[np.ndarray],
+        src_biases: List[np.ndarray],
+        dst_weights: List[np.ndarray],
+        dst_biases: List[np.ndarray],
+        src_rec_dim: int,
+        dst_rec_dim: int,
+    ) -> None:
+        """Helper to copy overlapping sub-matrices between source and destination layer arrays."""
+        num_old = len(src_weights)
+        num_new = len(dst_weights)
         min_layers = min(num_old, num_new)
+
         for i in range(min_layers):
-            old_w = self.weights[i]
-            new_w = adapted.weights[i]
-            old_b = self.biases[i]
-            new_b = adapted.biases[i]
+            old_w = src_weights[i]
+            new_w = dst_weights[i]
+            old_b = src_biases[i]
+            new_b = dst_biases[i]
 
             is_first = (i == 0)
             is_last = (i == min_layers - 1) and (num_old == num_new)
@@ -610,8 +608,8 @@ class BlobBrain:
                 c_h = min(old_w.shape[1], new_w.shape[1])
                 new_w[:r_in, :c_h] = old_w[:r_in, :c_h]
                 # If both have recurrent inputs, copy overlapping recurrent inputs
-                if self.recurrent_dim > 0 and adapted.recurrent_dim > 0:
-                    r_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+                if src_rec_dim > 0 and dst_rec_dim > 0:
+                    r_rec = min(src_rec_dim, dst_rec_dim)
                     new_w[INPUT_DIM : INPUT_DIM + r_rec, :c_h] = old_w[
                         INPUT_DIM : INPUT_DIM + r_rec, :c_h
                     ]
@@ -623,8 +621,8 @@ class BlobBrain:
                 new_w[:r_h, :c_out] = old_w[:r_h, :c_out]
                 new_b[:c_out] = old_b[:c_out]
                 # If both have recurrent outputs, copy overlapping recurrent outputs
-                if self.recurrent_dim > 0 and adapted.recurrent_dim > 0:
-                    c_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+                if src_rec_dim > 0 and dst_rec_dim > 0:
+                    c_rec = min(src_rec_dim, dst_rec_dim)
                     new_w[:r_h, OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_w[:r_h, OUTPUT_DIM : OUTPUT_DIM + c_rec]
                     new_b[OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_b[
                         OUTPUT_DIM : OUTPUT_DIM + c_rec
@@ -637,22 +635,56 @@ class BlobBrain:
 
         # Also preserve output projection from last layer if layer count changed
         if num_old != num_new:
-            old_last_w = self.weights[-1]
-            new_last_w = adapted.weights[-1]
-            old_last_b = self.biases[-1]
-            new_last_b = adapted.biases[-1]
+            old_last_w = src_weights[-1]
+            new_last_w = dst_weights[-1]
+            old_last_b = src_biases[-1]
+            new_last_b = dst_biases[-1]
             r = min(old_last_w.shape[0], new_last_w.shape[0])
             c_out = min(OUTPUT_DIM, old_last_w.shape[1], new_last_w.shape[1])
             new_last_w[:r, :c_out] = old_last_w[:r, :c_out]
             new_last_b[:c_out] = old_last_b[:c_out]
-            if self.recurrent_dim > 0 and adapted.recurrent_dim > 0:
-                c_rec = min(self.recurrent_dim, adapted.recurrent_dim)
+            if src_rec_dim > 0 and dst_rec_dim > 0:
+                c_rec = min(src_rec_dim, dst_rec_dim)
                 new_last_w[:r, OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_last_w[
                     :r, OUTPUT_DIM : OUTPUT_DIM + c_rec
                 ]
                 new_last_b[OUTPUT_DIM : OUTPUT_DIM + c_rec] = old_last_b[
                     OUTPUT_DIM : OUTPUT_DIM + c_rec
                 ]
+
+    def adapt_to_config(self, new_config: NetworkConfig) -> "BlobBrain":
+        """
+        Adapt this brain to a new user-defined depth/width configuration,
+        preserving overlapping sub-matrices of weights so learned behavior is not lost.
+        Cleanly copies sensor block [:26] and motor block [:6].
+        """
+        self._sync_from_pool()
+        adapted = BlobBrain(config=new_config, rng=self.rng)
+
+        # Map active layer weights and biases
+        self._copy_overlapping_layers(
+            src_weights=self.weights,
+            src_biases=self.biases,
+            dst_weights=adapted.weights,
+            dst_biases=adapted.biases,
+            src_rec_dim=self.recurrent_dim,
+            dst_rec_dim=adapted.recurrent_dim,
+        )
+
+        # Preserve innate genome if Baldwin plasticity is enabled
+        if adapted.config.baldwin_plasticity:
+            if self.config.baldwin_plasticity and self.innate_weights:
+                self._copy_overlapping_layers(
+                    src_weights=self.innate_weights,
+                    src_biases=self.innate_biases,
+                    dst_weights=adapted.innate_weights,
+                    dst_biases=adapted.innate_biases,
+                    src_rec_dim=self.recurrent_dim,
+                    dst_rec_dim=adapted.recurrent_dim,
+                )
+            else:
+                adapted.innate_weights = [w.copy() for w in adapted.weights]
+                adapted.innate_biases = [b.copy() for b in adapted.biases]
 
         if adapted.recurrent_dim > 0 and self.recurrent_dim > 0 and self.hidden_state is not None:
             min_rec = min(self.recurrent_dim, adapted.recurrent_dim)

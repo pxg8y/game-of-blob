@@ -30,7 +30,7 @@ while _search_dir and _search_dir != os.path.dirname(_search_dir):
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
-from blob_sim.config import NetworkConfig, WorldConfig
+from blob_sim.config import NetworkConfig, WorldConfig, WORLD_SCALE_PRESETS
 from blob_sim.neural import BatchedBrainPool
 from blob_sim.spatial import warmup_simulation_engine
 from blob_sim.world import SimulationWorld
@@ -453,7 +453,7 @@ def main() -> None:
     parser.add_argument("--blobs", type=int, default=2000, help="Initial blob population count.")
     parser.add_argument("--neurons", type=int, default=10000, help="Neurons in hidden layer (up to 10,000).")
     parser.add_argument("--ticks", type=int, default=100, help="Number of continuous ticks to simulate.")
-    parser.add_argument("--preset", type=str, default="continent", choices=["classic", "regional", "continent"], help="World map scale preset.")
+    parser.add_argument("--preset", type=str, default="continent", choices=list(WORLD_SCALE_PRESETS.keys()), help="World map scale preset.")
     parser.add_argument("--seed", type=int, default=42, help="Simulation random seed.")
     parser.add_argument("--output-json", type=str, default=None, help="Output file path for JSON benchmark results.")
     parser.add_argument("--warmup", type=int, default=5, help="Number of unmeasured warmup ticks.")
