@@ -185,6 +185,7 @@ class WorldConfig:
     every_tick_brain: bool = False  # Full 100% population evaluation & online RL trace update every single tick
     egocentric_frame: bool = False  # Local body-frame sensor rotation & differential drive kinematics
     intrinsic_homeostasis: bool = False  # Purely somatic body-based intrinsic homeostasis learning signal
+    continuous_lifecycle: bool = False  # Continuous, asynchronous lifecycle & ecology without midnight stalling
 
     def apply_scale_preset(self, preset_id: str) -> None:
         preset = WORLD_SCALE_PRESETS.get(preset_id, WORLD_SCALE_PRESETS["continent"])
@@ -204,6 +205,7 @@ class WorldConfig:
         self.every_tick_brain = bool(preset.get("every_tick_brain", False))
         self.egocentric_frame = bool(preset.get("egocentric_frame", False))
         self.intrinsic_homeostasis = bool(preset.get("intrinsic_homeostasis", False))
+        self.continuous_lifecycle = bool(preset.get("continuous_lifecycle", False))
         if "daylight_ratio" in preset:
             self.daylight_ratio = float(preset["daylight_ratio"])
         if "max_starvation_ticks" in preset:
