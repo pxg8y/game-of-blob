@@ -12,6 +12,7 @@ class NetworkConfig:
     custom_layers: Optional[List[int]] = None  # Optional explicit layer widths e.g. [32, 16]
     activation: str = "tanh"  # 'tanh', 'relu', 'gelu', 'silu'
     recurrent_dim: int = 0  # Number of recurrent working memory units (0..64)
+    baldwin_plasticity: bool = False  # Baldwin evolution with genome/plastic weight separation
 
     def get_hidden_dims(self) -> List[int]:
         if self.custom_layers and len(self.custom_layers) > 0:
@@ -31,6 +32,7 @@ class NetworkConfig:
             "activation": self.activation,
             "recurrent_dim": self.get_recurrent_dim(),
             "hidden_dims": self.get_hidden_dims(),
+            "baldwin_plasticity": bool(self.baldwin_plasticity),
         }
 
 
@@ -182,6 +184,7 @@ class WorldConfig:
     max_groups_cap: int = 120       # Max concurrent factions/empires (50-100+)
     every_tick_brain: bool = False  # Full 100% population evaluation & online RL trace update every single tick
     egocentric_frame: bool = False  # Local body-frame sensor rotation & differential drive kinematics
+    intrinsic_homeostasis: bool = False  # Purely somatic body-based intrinsic homeostasis learning signal
 
     def apply_scale_preset(self, preset_id: str) -> None:
         preset = WORLD_SCALE_PRESETS.get(preset_id, WORLD_SCALE_PRESETS["continent"])
@@ -200,6 +203,7 @@ class WorldConfig:
         self.min_population_floor = int(preset["min_population_floor"])
         self.every_tick_brain = bool(preset.get("every_tick_brain", False))
         self.egocentric_frame = bool(preset.get("egocentric_frame", False))
+        self.intrinsic_homeostasis = bool(preset.get("intrinsic_homeostasis", False))
         if "daylight_ratio" in preset:
             self.daylight_ratio = float(preset["daylight_ratio"])
         if "max_starvation_ticks" in preset:
