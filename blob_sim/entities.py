@@ -463,6 +463,7 @@ class Blob:
         self.sprint_level: float = 0.0
         self._trade_cooldown: int = 0
         self._colonize_cooldown: int = 0
+        self._repro_cooldown: int = 0
         self.last_trade_tick: int = -100
 
         # Spatial Memory (remembers last rich oasis / food grove location & quality)
@@ -677,6 +678,21 @@ class Blob:
         if ref is not None and self._kin_idx >= 0:
             ref._kin_ccooldowns[self._kin_idx] = ival
         self._colonize_cooldown = ival
+
+    @property
+    def repro_cooldown(self) -> int:
+        ref = self._kin_ref
+        if ref is not None and self._kin_idx >= 0:
+            return int(ref._kin_rcooldowns[self._kin_idx])
+        return self._repro_cooldown
+
+    @repro_cooldown.setter
+    def repro_cooldown(self, val: int) -> None:
+        ival = int(val)
+        ref = self._kin_ref
+        if ref is not None and self._kin_idx >= 0:
+            ref._kin_rcooldowns[self._kin_idx] = ival
+        self._repro_cooldown = ival
 
     @property
     def age_ticks(self) -> int:

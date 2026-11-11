@@ -154,6 +154,7 @@ class SimulationWorld:
         self._kin_hids = np.empty(0, dtype=np.int32)
         self._kin_tcooldowns = np.empty(0, dtype=np.int32)
         self._kin_ccooldowns = np.empty(0, dtype=np.int32)
+        self._kin_rcooldowns = np.empty(0, dtype=np.int32)
         self._kin_age_ticks = np.empty(0, dtype=np.int32)
         self._kin_ticks_since_meal = np.empty(0, dtype=np.int32)
         self._kin_vision_radii = np.empty(0, dtype=np.float32)
@@ -309,6 +310,7 @@ class SimulationWorld:
                 blob._money = float(self._kin_moneys[idx])
                 blob._trade_cooldown = int(self._kin_tcooldowns[idx])
                 blob._colonize_cooldown = int(self._kin_ccooldowns[idx])
+                blob._repro_cooldown = int(self._kin_rcooldowns[idx])
                 blob._age_ticks = int(self._kin_age_ticks[idx])
                 blob._ticks_since_last_meal = int(self._kin_ticks_since_meal[idx])
             blob._kin_ref = None
@@ -438,6 +440,7 @@ class SimulationWorld:
             self._kin_tcooldowns[i] = b.trade_cooldown
             self._kin_surplus_foods[i] = b.surplus_food
             self._kin_ccooldowns[i] = b.colonize_cooldown
+            self._kin_rcooldowns[i] = b.repro_cooldown
             self._kin_age_ticks[i] = b.age_ticks
             self._kin_ticks_since_meal[i] = b.ticks_since_last_meal
             self._kin_vision_radii[i] = b.vision_radius
@@ -461,6 +464,7 @@ class SimulationWorld:
                 self._kin_moneys[i] = b._money
                 self._kin_tcooldowns[i] = b._trade_cooldown
                 self._kin_ccooldowns[i] = b._colonize_cooldown
+                self._kin_rcooldowns[i] = b._repro_cooldown
                 self._kin_age_ticks[i] = b._age_ticks
                 self._kin_ticks_since_meal[i] = b._ticks_since_last_meal
                 b._kin_ref = self
@@ -1867,7 +1871,12 @@ class SimulationWorld:
         headings = self._kin_headings[:n_blobs]
         eff_visions = self._step_eff_visions[:n_blobs]
         has_grp = self._kin_has_groups[:n_blobs]
-        night_factor = np.float32(0.65 if night_mode else 1.0)
+        if self.world_cfg.continuous_lifecycle:
+            tod = self.time_of_day
+            light = 0.5 + 0.5 * math.sin(2.0 * math.pi * (tod - 0.15))
+            night_factor = np.float32(0.62 + 0.38 * light)
+        else:
+            night_factor = np.float32(0.65 if night_mode else 1.0)
         half_price = np.float32(self.world_cfg.base_food_price * 0.5)
 
         # Vectorized NumPy sensory traits extraction (0.04 ms vs 3.45 ms)
@@ -2458,6 +2467,7 @@ class SimulationWorld:
             self._kin_tcooldowns = resize_arr("_kin_tcooldowns", np.int32)
             self._kin_surplus_foods = resize_arr("_kin_surplus_foods", np.float32)
             self._kin_ccooldowns = resize_arr("_kin_ccooldowns", np.int32)
+            self._kin_rcooldowns = resize_arr("_kin_rcooldowns", np.int32)
             self._kin_age_ticks = resize_arr("_kin_age_ticks", np.int32)
             self._kin_ticks_since_meal = resize_arr("_kin_ticks_since_meal", np.int32)
             self._kin_vision_radii = resize_arr("_kin_vision_radii", np.float32)
@@ -3066,6 +3076,8 @@ class SimulationWorld:
             np.maximum(0, tcds - dt, out=tcds)
             ccds = self._kin_ccooldowns[:n_living]
             np.maximum(0, ccds - dt, out=ccds)
+            rcds = self._kin_rcooldowns[:n_living]
+            np.maximum(0, rcds - dt, out=rcds)
 
             # Overgrazed oasis spatial memory decay (only if overgrazed oases exist)
             if overgrazed_oases:
@@ -3175,6 +3187,7 @@ class SimulationWorld:
                 b._money = float(self._kin_moneys[idx])
                 b._trade_cooldown = int(self._kin_tcooldowns[idx])
                 b._colonize_cooldown = int(self._kin_ccooldowns[idx])
+                b._repro_cooldown = int(self._kin_rcooldowns[idx])
                 b._age_ticks = int(self._kin_age_ticks[idx])
                 b._ticks_since_last_meal = int(self._kin_ticks_since_meal[idx])
                 b._reputation = round(float(self._kin_reputations[idx]), 3)
@@ -3244,6 +3257,7 @@ class SimulationWorld:
                         self._kin_hit_rocks[write_idx] = self._kin_hit_rocks[n]
                         self._kin_speed_norms[write_idx] = self._kin_speed_norms[n]
                         self._kin_ccooldowns[write_idx] = self._kin_ccooldowns[n]
+                        self._kin_rcooldowns[write_idx] = self._kin_rcooldowns[n]
                         self._kin_age_ticks[write_idx] = self._kin_age_ticks[n]
                         self._kin_ticks_since_meal[write_idx] = self._kin_ticks_since_meal[n]
                         self._kin_vision_radii[write_idx] = self._kin_vision_radii[n]
@@ -3300,18 +3314,27 @@ class SimulationWorld:
             r for r in self.recent_raid_lines if (self.tick_count - r["tick"]) <= 22
         ]
 
-        # Periodic ecological oasis pulse (overgrazing recovery & ripe fruit growth)
-        if (prev_tick_in_day // 75) < (self.tick_in_day // 75):
-            self._step_oasis_ecology()
+        if self.world_cfg.continuous_lifecycle:
+            # Kontinuierlicher Oasen-Wuchs: alle 20 Ticks Nahrung spawnen
+            if (prev_tick_in_day // 20) < (self.tick_in_day // 20):
+                continuous_spawn = max(2, round(self.world_cfg.daily_food_spawn / (self.world_cfg.ticks_per_day / 20.0)))
+                self.spawn_daily_food(continuous_spawn)
+            # Alle 60 Ticks sanft die Oasen-Regeneration aktualisieren
+            if (prev_tick_in_day // 60) < (self.tick_in_day // 60):
+                self._step_oasis_ecology()
+        else:
+            # Periodic ecological oasis pulse (overgrazing recovery & ripe fruit growth)
+            if (prev_tick_in_day // 75) < (self.tick_in_day // 75):
+                self._step_oasis_ecology()
 
-        # Amortized dawn food spawning
-        if getattr(self, "_pending_food_spawn", 0) > 0:
-            chunk = min(1200, self._pending_food_spawn)
-            self._pending_food_spawn -= chunk
-            self.spawn_daily_food(chunk)
+            # Amortized dawn food spawning
+            if getattr(self, "_pending_food_spawn", 0) > 0:
+                chunk = min(1200, self._pending_food_spawn)
+                self._pending_food_spawn -= chunk
+                self.spawn_daily_food(chunk)
 
-        if self.tick_in_day == self.world_cfg.ticks_per_day // 2:
-            self.spawn_daily_food(max(25, self.world_cfg.daily_food_spawn // 3))
+            if self.tick_in_day == self.world_cfg.ticks_per_day // 2:
+                self.spawn_daily_food(max(25, self.world_cfg.daily_food_spawn // 3))
 
         living_blobs = self._compact_living_blobs()
         if not living_blobs:
@@ -3610,19 +3633,135 @@ class SimulationWorld:
                 brains, step_rewards, self.prefs.learning_rate
             )
 
+        # Asynchrone Fortpflanzung mit Energieerhaltung (continuous_lifecycle)
+        midtick_babies: List[Blob] = []
+        if self.world_cfg.continuous_lifecycle and n_living > 0 and len(self.blobs) < self.world_cfg.max_population_cap:
+            # 1. repro_cooldown == 0
+            # 2. energy >= 0.78 * max_energy
+            # 3. food_today >= repro_need * 0.85
+            # 4. Pop-Cap
+            rcooldowns = self._kin_rcooldowns[:n_living]
+            energies = self._kin_energies[:n_living]
+            foods_today = self._kin_foods_today[:n_living]
+            max_energies = 85.0 + 15.0 * self._kin_gene_sizes[:n_living]
+            repro_mask = (
+                (rcooldowns == 0)
+                & (energies >= (0.78 * max_energies))
+                & (foods_today >= (repro_target * 0.85))
+            )
+            cand_indices = np.flatnonzero(repro_mask)
+            if len(cand_indices) > 0:
+                if len(cand_indices) > 24:
+                    cand_energies = energies[cand_indices]
+                    cand_indices = cand_indices[np.argsort(-cand_energies)[:24]]
+
+                remaining_slots = self.world_cfg.max_population_cap - len(self.blobs)
+                if len(cand_indices) > remaining_slots:
+                    cand_indices = cand_indices[:remaining_slots]
+
+                min_p_idxs = getattr(self, "_last_min_p_idxs", None)
+                for c_i in cand_indices:
+                    parent = living_blobs[c_i]
+                    if not parent.alive:
+                        continue
+
+                    # Partner finding
+                    partner: Optional[Blob] = None
+                    if (
+                        min_p_idxs is not None
+                        and len(min_p_idxs) > c_i
+                        and len(nearest_peer_dists) > c_i
+                        and nearest_peer_dists[c_i] <= 95.0
+                    ):
+                        p_idx = int(min_p_idxs[c_i])
+                        if 0 <= p_idx < n_living and p_idx != c_i:
+                            cand_partner = living_blobs[p_idx]
+                            if cand_partner.alive:
+                                partner = cand_partner
+
+                    # Reproduction
+                    child = self._reproduce_blob(parent, partner=partner)
+
+                    # Energy conservation with float32 buffer precision
+                    e_before = parent.energy
+                    target_child_e = min(round(0.38 * e_before, 2), child.max_energy)
+                    parent.energy = max(1.0, e_before - target_child_e)
+                    actual_parent_e = parent.energy
+                    child.energy = e_before - actual_parent_e
+
+                    # Food cost and cooldown
+                    food_cost = min(parent.food_today, self.world_cfg.reproduction_food_need * 0.85)
+                    parent.food_today = round(max(0.0, parent.food_today - food_cost), 3)
+                    if parent.surplus_food > 0.0 and parent.food_today < repro_target:
+                        shift = min(parent.surplus_food, repro_target - parent.food_today)
+                        parent.surplus_food = round(parent.surplus_food - shift, 3)
+                        parent.food_today = round(parent.food_today + shift, 3)
+
+                    parent.repro_cooldown = max(120, self.world_cfg.ticks_per_day // 3)
+
+                    # Local placement near parent avoiding rocks
+                    w_w = self.world_cfg.width
+                    w_h = self.world_cfg.height
+                    px, py = parent.x, parent.y
+                    placed = False
+                    for _ in range(6):
+                        cx = float(np.clip(px + self.rng.normal(0.0, 10.0), 25.0, w_w - 25.0))
+                        cy = float(np.clip(py + self.rng.normal(0.0, 10.0), 25.0, w_h - 25.0))
+                        if not self._point_hits_rock(cx, cy, pad=child.body_radius + 4.0):
+                            child.x = cx
+                            child.y = cy
+                            placed = True
+                            break
+                    if not placed:
+                        child.x = px
+                        child.y = py
+
+                    midtick_babies.append(child)
+
         self._check_midday_starvation(living_blobs)
         self._compact_living_blobs()
 
+        if midtick_babies:
+            base_idx = len(self.blobs)
+            self.blobs.extend(midtick_babies)
+            for b_i, b in enumerate(midtick_babies):
+                b._sim_idx = base_idx + b_i
+            self._kin_static_dirty = True
+
         tpd = self.world_cfg.ticks_per_day
-        if tpd >= 20 and dt == 1:
-            if self.tick_in_day == tpd - 2:
-                self._stage_eod_home_maintenance(living_blobs)
-            elif self.tick_in_day == tpd - 1:
-                self._stage_eod_settlements_and_learning(living_blobs)
+        if self.world_cfg.continuous_lifecycle:
+            if self.tick_in_day >= tpd:
+                # Leichtgewichtiger Tageswechsel ohne Mitternachts-Stall
+                for b in self.blobs:
+                    if b.alive:
+                        b.age_days += 1
+                self.telemetry.on_eod_pre_accounting(
+                    self.blobs, self.world_cfg.survival_food_need, self.world_cfg.reproduction_food_need
+                )
+                self._update_hall_of_fame()
+                self._cleanup_groups_and_homes()
+                if self.world_cfg.min_population_floor > 0 and len(self.blobs) < self.world_cfg.min_population_floor:
+                    self._respawn_from_hall_of_fame()
+                self.record_daily_snapshot()
+                self.day_number += 1
+                self.tick_in_day = 0
+                self.births_today = 0
+                self.deaths_today = 0
+                self.trades_today = 0
+                self.raids_today = 0
+                self.raids_repelled_today = 0
+                self.exiles_today = 0
+                self.bounties_today = 0
+        else:
+            if tpd >= 20 and dt == 1:
+                if self.tick_in_day == tpd - 2:
+                    self._stage_eod_home_maintenance(living_blobs)
+                elif self.tick_in_day == tpd - 1:
+                    self._stage_eod_settlements_and_learning(living_blobs)
+                elif self.tick_in_day >= tpd:
+                    self._stage_eod_reproduction_and_rollover(living_blobs, amortize_food=True)
             elif self.tick_in_day >= tpd:
-                self._stage_eod_reproduction_and_rollover(living_blobs, amortize_food=True)
-        elif self.tick_in_day >= tpd:
-            self._end_of_day_accounting(amortize_food=True)
+                self._end_of_day_accounting(amortize_food=True)
         return dt
 
     def _process_foraging(
@@ -3660,7 +3799,7 @@ class SimulationWorld:
 
         food_xs = self._food_xs
         food_ys = self._food_ys
-        if food_xs is None or len(food_xs) != n_foods or not use_kin_cache:
+        if getattr(self, "_food_dirty", False) or food_xs is None or len(food_xs) != n_foods or not use_kin_cache:
             food_xs = np.fromiter((f.x for f in self.foods), dtype=np.float32, count=n_foods)
             food_ys = np.fromiter((f.y for f in self.foods), dtype=np.float32, count=n_foods)
             self._food_base_reaches = np.fromiter(
@@ -5267,6 +5406,25 @@ class SimulationWorld:
             living = [b for b in self.blobs if b.alive]
             self.selected_blob_id = living[0].id if living else None
 
+        if self.world_cfg.continuous_lifecycle and len(self.foods) < (self.world_cfg.daily_food_spawn * 3 + 200):
+            bx, by = blob.x, blob.y
+            if not self._point_hits_rock(bx, by, pad=8.0):
+                nutrition = round(max(0.35, 0.55 * blob.genes.size), 2)
+                self.foods.append(
+                    FoodItem(
+                        id=self._next_food_id,
+                        x=bx,
+                        y=by,
+                        nutrition=nutrition,
+                        golden=False,
+                        oasis_id=None,
+                    )
+                )
+                self._next_food_id += 1
+                self.food_version += 1
+                self.recent_eaten_indices.clear()
+                self._food_dirty = True
+
     def _consider_for_hall_of_fame(self, blob: Blob) -> None:
         score = float(
             blob.food_eaten_lifetime * 1.6
@@ -6294,6 +6452,7 @@ class SimulationWorld:
         self._kin_hids = np.empty(0, dtype=np.int32)
         self._kin_tcooldowns = np.empty(0, dtype=np.int32)
         self._kin_ccooldowns = np.empty(0, dtype=np.int32)
+        self._kin_rcooldowns = np.empty(0, dtype=np.int32)
         self._kin_age_ticks = np.empty(0, dtype=np.int32)
         self._kin_ticks_since_meal = np.empty(0, dtype=np.int32)
         self._kin_vision_radii = np.empty(0, dtype=np.float32)
