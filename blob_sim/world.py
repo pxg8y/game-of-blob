@@ -452,7 +452,10 @@ class SimulationWorld:
                 h_obj = self.homes.get(b.home_id)
                 b.home_obj = h_obj
             self._step_home_objs[i] = h_obj
-            hr = h_obj.radius if h_obj is not None else 48.0
+            if self.world_cfg.emergent_interactions:
+                hr = 0.0
+            else:
+                hr = h_obj.radius if h_obj is not None else 48.0
             self._step_home_radii_list[i] = hr
             self._kin_home_xs[i] = b.home_x
             self._kin_home_ys[i] = b.home_y
@@ -3275,7 +3278,10 @@ class SimulationWorld:
                     h_obj = homes_dict.get(blob.home_id)
                     blob.home_obj = h_obj
                 home_objs[idx] = h_obj
-                hr = h_obj.radius if h_obj is not None else 48.0
+                if self.world_cfg.emergent_interactions:
+                    hr = 0.0
+                else:
+                    hr = h_obj.radius if h_obj is not None else 48.0
                 home_radii_list[idx] = hr
                 home_radii_arr[idx] = hr
                 home_xs[idx] = blob.home_x
@@ -3385,6 +3391,9 @@ class SimulationWorld:
         )
 
         if self.world_cfg.emergent_interactions:
+            # In der freien ALife-Wildnis existieren keine Siedlungshäuser:
+            # Kanäle 3, 4, 5 (dx_home, dy_home, dist_home) auf 0.0 nullen
+            obs_batch[:, 3:6] = 0.0
             # Kanal 24: Signal des nächsten Nachbarn, gewichtet mit Nachbar-Nähe (obs_batch[:, 8])
             # Kanal 25: Eigenes Signal
             # Kanal 11: Phänotypische Verwandtschaft zum nächsten Nachbarn in [-1.0, 1.0]
@@ -3591,6 +3600,20 @@ class SimulationWorld:
             # Alle 60 Ticks sanft die Oasen-Regeneration aktualisieren
             if (prev_tick_in_day // 60) < (self.tick_in_day // 60):
                 self._step_oasis_ecology()
+
+            # Sanfte kontinuierliche Magen-Verdauung alle 10 Ticks (VOR Wahrnehmung und VOR prev_energies)
+            if (prev_tick_in_day // 10) < (self.tick_in_day // 10):
+                digest_amt = round((self.world_cfg.survival_food_need * 1.15) / max(6.0, self.world_cfg.ticks_per_day / 10.0), 4)
+                repro_t = max(0.5, self.world_cfg.reproduction_food_need)
+                for b in self._compact_living_blobs():
+                    if b.total_food > 0.0:
+                        actual_digested = min(b.total_food, digest_amt)
+                        b.deduct_traded_food(actual_digested)
+                        if b.surplus_food > 0.0 and b.food_today < repro_t:
+                            shift = min(b.surplus_food, repro_t - b.food_today)
+                            b.food_today = round(b.food_today + shift, 3)
+                            b.surplus_food = round(b.surplus_food - shift, 3)
+                        b.energy = min(b.max_energy, b.energy + actual_digested * 8.0)
         else:
             # Periodic ecological oasis pulse (overgrazing recovery & ripe fruit growth)
             if (prev_tick_in_day // 75) < (self.tick_in_day // 75):
@@ -5798,16 +5821,23 @@ class SimulationWorld:
         )
         child_reputation = round(0.25 * parent_rep, 3)
 
-        parent_home = self.homes.get(parent.home_id)
-        if parent_home is not None and not parent_home.is_full:
-            child_home = parent_home
+        is_emergent = bool(self.world_cfg.emergent_interactions)
+        if is_emergent:
+            parent_home = self.homes.get(parent.home_id)
+            child_home = parent_home or next(iter(self.homes.values()))
+            starter_money = 0.0
+            bx = float(np.clip(parent.x + self.rng.normal(0.0, 14.0), 20.0, self.world_cfg.width - 20.0))
+            by = float(np.clip(parent.y + self.rng.normal(0.0, 14.0), 20.0, self.world_cfg.height - 20.0))
         else:
-            child_home = self._find_or_create_settlement_home(
-                parent.group_id, parent.home_x, parent.home_y
-            )
-
-        bx = float(np.clip(child_home.x + self.rng.normal(0.0, 14.0), 20.0, self.world_cfg.width - 20.0))
-        by = float(np.clip(child_home.y + self.rng.normal(0.0, 14.0), 20.0, self.world_cfg.height - 20.0))
+            parent_home = self.homes.get(parent.home_id)
+            if parent_home is not None and not parent_home.is_full:
+                child_home = parent_home
+            else:
+                child_home = self._find_or_create_settlement_home(
+                    parent.group_id, parent.home_x, parent.home_y
+                )
+            bx = float(np.clip(child_home.x + self.rng.normal(0.0, 14.0), 20.0, self.world_cfg.width - 20.0))
+            by = float(np.clip(child_home.y + self.rng.normal(0.0, 14.0), 20.0, self.world_cfg.height - 20.0))
 
         child = Blob(
             blob_id=self._next_blob_id,
@@ -5830,16 +5860,17 @@ class SimulationWorld:
         self.total_births_all_time += 1
         self.telemetry.on_birth(parent, partner, child, child_home)
 
-        child_home.resident_ids.append(child.id)
-        if parent.group_id is not None and parent.group_id in self.groups:
-            self.groups[parent.group_id].member_ids.append(child.id)
-            self._federate_home_into_group(child_home, self.groups[parent.group_id])
+        if not is_emergent:
+            child_home.resident_ids.append(child.id)
+            if parent.group_id is not None and parent.group_id in self.groups:
+                self.groups[parent.group_id].member_ids.append(child.id)
+                self._federate_home_into_group(child_home, self.groups[parent.group_id])
 
-        if self.births_today <= 8:
-            self.log_event(
-                "birth",
-                f"Blob #{parent.id} hat 2x Tagesnahrung erreicht → Kind #{child.id} (Gen {child.generation}) in Haus #{child_home.id} geboren!",
-            )
+            if self.births_today <= 8:
+                self.log_event(
+                    "birth",
+                    f"Blob #{parent.id} hat 2x Tagesnahrung erreicht → Kind #{child.id} (Gen {child.generation}) in Haus #{child_home.id} geboren!",
+                )
         self._register_blob(child)
         return child
 
@@ -5977,7 +6008,7 @@ class SimulationWorld:
 
         for i in range(needed):
             home = home_list[i % len(home_list)]
-            if home.is_full:
+            if home.is_full and not self.world_cfg.emergent_interactions:
                 home = self._find_or_create_settlement_home(home.group_id, home.x, home.y)
             if self.hall_of_fame:
                 champ = self.hall_of_fame[i % len(self.hall_of_fame)]
@@ -6291,19 +6322,22 @@ class SimulationWorld:
                     nearest_home = h
 
         if nearest_home is None or min_d > 320.0:
-            hid = self._next_home_id
-            self._next_home_id += 1
-            nearest_home = Home(
-                id=hid,
-                x=x,
-                y=y,
-                radius=48.0,
-                max_residents=self.world_cfg.max_residents_per_home,
-                food_depot=2.0,
-                gold_vault=15.0,
-            )
-            self._evaluate_home_location(nearest_home)
-            self.homes[hid] = nearest_home
+            if self.world_cfg.emergent_interactions and self.homes:
+                nearest_home = next(iter(self.homes.values()))
+            else:
+                hid = self._next_home_id
+                self._next_home_id += 1
+                nearest_home = Home(
+                    id=hid,
+                    x=x,
+                    y=y,
+                    radius=48.0,
+                    max_residents=self.world_cfg.max_residents_per_home,
+                    food_depot=2.0,
+                    gold_vault=15.0,
+                )
+                self._evaluate_home_location(nearest_home)
+                self.homes[hid] = nearest_home
 
         if self.hall_of_fame:
             champ = self.hall_of_fame[0]
@@ -6465,7 +6499,7 @@ class SimulationWorld:
             ],
             "oases": [o.to_dict() for o in self.oases.values()],
             "obstacles": getattr(self, "_obstacles_dict_cache", None) or [ob.to_dict() for ob in self.obstacles],
-            "homes": [h.to_dict() for h in self.homes.values()],
+            "homes": [] if self.world_cfg.emergent_interactions else [h.to_dict() for h in self.homes.values()],
             "groups": [g.to_dict() for g in self.groups.values()],
             "trade_lines": self.recent_trade_lines,
             "raid_lines": self.recent_raid_lines,
@@ -6706,7 +6740,7 @@ class SimulationWorld:
                 "total_migrations": self.total_migrations_all_time,
             },
             "oases": [o.to_dict() for o in self.oases.values()],
-            "homes": [h.to_dict() for h in self.homes.values()],
+            "homes": [] if self.world_cfg.emergent_interactions else [h.to_dict() for h in self.homes.values()],
             "groups": [g.to_dict() for g in self.groups.values()],
             "trade_lines": self.recent_trade_lines[-40:],
             "raid_lines": self.recent_raid_lines[-40:],
@@ -6729,20 +6763,35 @@ class SimulationWorld:
         hof_serialized = []
         for entry in self.hall_of_fame:
             b_dict = entry.get("brain", {})
+            b_ser = dict(b_dict)
+            if "weights" in b_ser:
+                b_ser["weights"] = [
+                    w.tolist() if isinstance(w, np.ndarray) else w
+                    for w in b_ser.get("weights", [])
+                ]
+            if "biases" in b_ser:
+                b_ser["biases"] = [
+                    b.tolist() if isinstance(b, np.ndarray) else b
+                    for b in b_ser.get("biases", [])
+                ]
+            if "innate_weights" in b_ser:
+                b_ser["innate_weights"] = [
+                    w.tolist() if isinstance(w, np.ndarray) else w
+                    for w in b_ser.get("innate_weights", [])
+                ]
+            if "innate_biases" in b_ser:
+                b_ser["innate_biases"] = [
+                    b.tolist() if isinstance(b, np.ndarray) else b
+                    for b in b_ser.get("innate_biases", [])
+                ]
+            if "hidden_state" in b_ser:
+                hs = b_ser["hidden_state"]
+                b_ser["hidden_state"] = hs.tolist() if isinstance(hs, np.ndarray) else hs
+
             hof_serialized.append(
                 {
                     **entry,
-                    "brain": {
-                        **b_dict,
-                        "weights": [
-                            w.tolist() if isinstance(w, np.ndarray) else w
-                            for w in b_dict.get("weights", [])
-                        ],
-                        "biases": [
-                            b.tolist() if isinstance(b, np.ndarray) else b
-                            for b in b_dict.get("biases", [])
-                        ],
-                    },
+                    "brain": b_ser,
                 }
             )
         return {
@@ -6774,6 +6823,7 @@ class SimulationWorld:
                 custom_layers=nc.get("custom_layers"),
                 activation=nc.get("activation", "tanh"),
                 recurrent_dim=nc.get("recurrent_dim", 0),
+                baldwin_plasticity=bool(nc.get("baldwin_plasticity", False)),
             )
         if "prefs" in data:
             for k, v in data["prefs"].items():
@@ -6781,6 +6831,8 @@ class SimulationWorld:
                     setattr(self.prefs, k, float(v))
         if "world_cfg" in data:
             wc = data["world_cfg"]
+            if "scale_preset" in wc and wc["scale_preset"]:
+                self.world_cfg.apply_scale_preset(str(wc["scale_preset"]))
             for field_name, caster in (
                 ("daily_food_spawn", int),
                 ("ticks_per_day", int),
@@ -6788,6 +6840,11 @@ class SimulationWorld:
                 ("base_food_price", float),
                 ("max_residents_per_home", int),
                 ("start_paradigm", str),
+                ("every_tick_brain", bool),
+                ("egocentric_frame", bool),
+                ("intrinsic_homeostasis", bool),
+                ("continuous_lifecycle", bool),
+                ("emergent_interactions", bool),
             ):
                 if field_name in wc:
                     setattr(self.world_cfg, field_name, caster(wc[field_name]))
@@ -6810,7 +6867,7 @@ class SimulationWorld:
             home_list = list(self.homes.values())
             for i, bdata in enumerate(imported_blobs):
                 home = home_list[i % len(home_list)]
-                if home.is_full:
+                if home.is_full and not self.world_cfg.emergent_interactions:
                     home = self._find_or_create_settlement_home(None, home.x, home.y)
                 g_dict = bdata.get("genes", {})
                 genes = Genes(
@@ -6823,6 +6880,7 @@ class SimulationWorld:
                     drive_pain=g_dict.get("drive_pain", 1.0),
                     drive_social=g_dict.get("drive_social", 0.3),
                     plasticity_lr=g_dict.get("plasticity_lr", 1.0),
+                    sigma_mut=g_dict.get("sigma_mut", 0.05),
                 )
                 brain = BlobBrain.from_dict(bdata["brain"], rng=self.rng).adapt_to_config(self.net_cfg)
                 blob = Blob(
@@ -6846,6 +6904,7 @@ class SimulationWorld:
                 blob._sim_idx = len(self.blobs) - 1
             if self.blobs:
                 self.selected_blob_id = self.blobs[0].id
+        self._kin_static_dirty = True
         self.record_daily_snapshot()
         self.log_event("world", f"Population aus JSON geladen ({len(self.blobs)} Blobs).")
 
@@ -6907,6 +6966,7 @@ class SimulationWorld:
         self._kin_moneys = np.empty(0, dtype=np.float32)
         self._kin_reputations = np.empty(0, dtype=np.float32)
         self._kin_peer_reps = np.empty(0, dtype=np.float32)
+        self._kin_signals = np.empty(0, dtype=np.float32)
         self._kin_is_at_home_int = np.empty(0, dtype=np.int32)
         self._kin_sprints = np.empty(0, dtype=np.float32)
         self._kin_mem_xs = np.empty(0, dtype=np.float64)

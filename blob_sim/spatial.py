@@ -826,7 +826,7 @@ def prep_step_observations_numba(
         dhy = home_ys[i] - ys[i]
         d2 = dhx * dhx + dhy * dhy
         hr = home_radii[i]
-        at_home = d2 <= (hr * hr)
+        at_home = (hr > 0.0) and (d2 <= (hr * hr))
         is_at_home_out[i] = 1 if at_home else 0
 
         if d2 > 1e-8:
@@ -1172,7 +1172,7 @@ def apply_kinematics_and_metabolism_batch_numba(
         # 5. Home proximity
         dhx = hx - bx
         dhy = hy - by
-        at_home = (dhx * dhx + dhy * dhy) <= (hr * hr)
+        at_home = (hr > 0.0) and ((dhx * dhx + dhy * dhy) <= (hr * hr))
         is_at_homes[i] = at_home
 
         # 6. Metabolism energy deduction
