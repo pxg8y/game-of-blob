@@ -144,6 +144,7 @@ class SimulationWorld:
         self._kin_moneys = np.empty(0, dtype=np.float32)
         self._kin_reputations = np.empty(0, dtype=np.float32)
         self._kin_peer_reps = np.empty(0, dtype=np.float32)
+        self._kin_signals = np.empty(0, dtype=np.float32)
         self._kin_is_at_home_int = np.empty(0, dtype=np.int32)
         self._kin_sprints = np.empty(0, dtype=np.float32)
         self._kin_mem_xs = np.empty(0, dtype=np.float64)
@@ -432,6 +433,7 @@ class SimulationWorld:
             self._kin_mem_ys[i] = b.memory_y
             self._kin_mem_strengths[i] = b.memory_strength
             self._kin_reputations[i] = b._reputation
+            self._kin_signals[i] = b.signal_value
             self._kin_moneys[i] = b.money
             self._kin_foods_today[i] = b.food_today
             bgid = b._group_id
@@ -462,6 +464,7 @@ class SimulationWorld:
                 self._kin_foods_today[i] = b._food_today
                 self._kin_surplus_foods[i] = b._surplus_food
                 self._kin_moneys[i] = b._money
+                self._kin_signals[i] = b._signal_value
                 self._kin_tcooldowns[i] = b._trade_cooldown
                 self._kin_ccooldowns[i] = b._colonize_cooldown
                 self._kin_rcooldowns[i] = b._repro_cooldown
@@ -2457,6 +2460,7 @@ class SimulationWorld:
             self._kin_moneys = resize_arr("_kin_moneys", np.float32)
             self._kin_reputations = resize_arr("_kin_reputations", np.float32)
             self._kin_peer_reps = resize_arr("_kin_peer_reps", np.float32)
+            self._kin_signals = resize_arr("_kin_signals", np.float32)
             self._kin_is_at_home_int = resize_arr("_kin_is_at_home_int", np.int32)
             self._kin_sprints = resize_arr("_kin_sprints", np.float32)
             self._kin_mem_xs = resize_arr("_kin_mem_xs", np.float64)
@@ -2889,23 +2893,24 @@ class SimulationWorld:
             if e > 0.0 and blob.ticks_since_last_meal < max_starve:
                 continue
 
-            if blob.money >= self.world_cfg.base_food_price * 0.8 and blob.is_at_home:
-                depot_home = self._find_settlement_home_with_food(blob, min_food=0.4)
-                if depot_home is not None:
-                    rep_buy_mult = self._get_reputation_buy_multiplier(blob)
-                    cost = round(self.world_cfg.base_food_price * 0.4 * rep_buy_mult, 2)
-                    if blob.money >= cost:
-                        depot_home.food_depot = round(depot_home.food_depot - 0.4, 2)
-                        depot_home.gold_vault = round(depot_home.gold_vault + cost, 2)
-                        blob.money = round(blob.money - cost, 2)
-                        blob.food_today = round(blob.food_today + 0.4, 3)
-                        blob.energy = min(blob.max_energy, blob.energy + 38.0)
-                        blob.ticks_since_last_meal = 0
-                        blob.trades_made += 1
-                        self.trades_today += 1
-                        self.total_trades_all_time += 1
-                        self.telemetry.on_emergency_ration_buy(blob, depot_home, 0.4, cost)
-                        continue
+            if not self.world_cfg.emergent_interactions:
+                if blob.money >= self.world_cfg.base_food_price * 0.8 and blob.is_at_home:
+                    depot_home = self._find_settlement_home_with_food(blob, min_food=0.4)
+                    if depot_home is not None:
+                        rep_buy_mult = self._get_reputation_buy_multiplier(blob)
+                        cost = round(self.world_cfg.base_food_price * 0.4 * rep_buy_mult, 2)
+                        if blob.money >= cost:
+                            depot_home.food_depot = round(depot_home.food_depot - 0.4, 2)
+                            depot_home.gold_vault = round(depot_home.gold_vault + cost, 2)
+                            blob.money = round(blob.money - cost, 2)
+                            blob.food_today = round(blob.food_today + 0.4, 3)
+                            blob.energy = min(blob.max_energy, blob.energy + 38.0)
+                            blob.ticks_since_last_meal = 0
+                            blob.trades_made += 1
+                            self.trades_today += 1
+                            self.total_trades_all_time += 1
+                            self.telemetry.on_emergency_ration_buy(blob, depot_home, 0.4, cost)
+                            continue
 
             self._kill_blob(blob, reason="verhungert (Energie leer)")
 
@@ -3060,6 +3065,7 @@ class SimulationWorld:
                 energies[idx] = blob.energy
                 moneys[idx] = blob.money
                 reputations[idx] = blob._reputation
+                self._kin_signals[idx] = blob.signal_value
                 gene_sizes[idx] = blob.genes.size
                 mem_xs[idx] = blob.memory_x
                 mem_ys[idx] = blob.memory_y
@@ -3159,6 +3165,48 @@ class SimulationWorld:
             mem_strengths,
         )
 
+        if self.world_cfg.emergent_interactions:
+            # Kanal 24: Signal des nächsten Nachbarn, gewichtet mit Nachbar-Nähe (obs_batch[:, 8])
+            # Kanal 25: Eigenes Signal
+            # Kanal 11: Phänotypische Verwandtschaft zum nächsten Nachbarn in [-1.0, 1.0]
+            obs_batch[:, 25] = self._kin_signals[:n_living]
+            obs_batch[:, 24] = np.float32(0.0)
+            if p_idxs is not None and len(p_idxs) >= n_living:
+                p_sub = p_idxs[:n_living]
+                valid_mask = (p_sub >= 0) & (p_sub < n_living)
+                if np.any(valid_mask):
+                    obs_batch[valid_mask, 24] = self._kin_signals[p_sub[valid_mask]] * obs_batch[valid_mask, 8]
+                    # Berechne genotypische Ähnlichkeit für gültige Nachbarn
+                    for i_valid in np.flatnonzero(valid_mask):
+                        j_peer = p_sub[i_valid]
+                        g1 = living_blobs[i_valid].genes
+                        g2 = living_blobs[j_peer].genes
+                        dhue = abs(g1.hue - g2.hue)
+                        if dhue > 180.0:
+                            dhue = 360.0 - dhue
+                        hue_dist = dhue / 180.0
+                        dspeed = abs(g1.speed - g2.speed) / 1.3
+                        dsense = abs(g1.sense - g2.sense) / 1.3
+                        dsize = abs(g1.size - g2.size) / 0.95
+                        dist_genes = hue_dist + dspeed + dsense + dsize
+                        obs_batch[i_valid, 11] = np.float32(2.0 * math.exp(-dist_genes) - 1.0)
+            elif nearest_peers is not None:
+                for idx in range(n_living):
+                    np_peer = nearest_peers[idx]
+                    if np_peer is not None:
+                        obs_batch[idx, 24] = np.float32(np_peer.signal_value * obs_batch[idx, 8])
+                        g1 = living_blobs[idx].genes
+                        g2 = np_peer.genes
+                        dhue = abs(g1.hue - g2.hue)
+                        if dhue > 180.0:
+                            dhue = 360.0 - dhue
+                        hue_dist = dhue / 180.0
+                        dspeed = abs(g1.speed - g2.speed) / 1.3
+                        dsense = abs(g1.sense - g2.sense) / 1.3
+                        dsize = abs(g1.size - g2.size) / 0.95
+                        dist_genes = hue_dist + dspeed + dsense + dsize
+                        obs_batch[idx, 11] = np.float32(2.0 * math.exp(-dist_genes) - 1.0)
+
         return (
             obs_batch,
             home_objs,
@@ -3191,6 +3239,7 @@ class SimulationWorld:
                 b._age_ticks = int(self._kin_age_ticks[idx])
                 b._ticks_since_last_meal = int(self._kin_ticks_since_meal[idx])
                 b._reputation = round(float(self._kin_reputations[idx]), 3)
+                b._signal_value = float(self._kin_signals[idx])
             b._kin_ref = None
             b._kin_idx = -1
         b._sim_idx = -1
@@ -3246,6 +3295,7 @@ class SimulationWorld:
                         self._kin_foods_today[write_idx] = self._kin_foods_today[n]
                         self._kin_moneys[write_idx] = self._kin_moneys[n]
                         self._kin_reputations[write_idx] = self._kin_reputations[n]
+                        self._kin_signals[write_idx] = self._kin_signals[n]
                         self._kin_gids[write_idx] = self._kin_gids[n]
                         self._kin_hids[write_idx] = self._kin_hids[n]
                         self._kin_tcooldowns[write_idx] = self._kin_tcooldowns[n]
@@ -3396,6 +3446,8 @@ class SimulationWorld:
             update_traces=do_trace,
             cohort_idx=cohort_idx,
         )
+        if self.world_cfg.emergent_interactions:
+            self._kin_signals[:n_living] = actions_batch[:, 4]
         self.telemetry.record_step_actions(living_blobs, actions_batch, dt)
         pre_xs = self._kin_xs[:n_living].copy()
         pre_ys = self._kin_ys[:n_living].copy()
@@ -3459,146 +3511,152 @@ class SimulationWorld:
             b.sprint_level = sps[idx]
             b.distance_traveled += step_dists[idx]
 
-        # Vectorized colonize candidate detection using true coordinates
-        tod_56 = tod >= 0.56
-        dhx = self._kin_xs[:n_living] - self._kin_home_xs[:n_living]
-        dhy = self._kin_ys[:n_living] - self._kin_home_ys[:n_living]
-        dist_c_sq = dhx * dhx + dhy * dhy
-        col_cand_mask = (actions_batch[:, 5] > 0.08) & (dist_c_sq > 122500.0)
-        if tod_56:
-            col_cand_mask |= (dist_c_sq > 608400.0) & (actions_batch[:, 5] > 0.15)
-        col_candidate_indices = np.flatnonzero(col_cand_mask)
-        if len(col_candidate_indices) > 12:
-            desires = actions_batch[col_candidate_indices, 5]
-            col_candidate_indices = col_candidate_indices[np.argsort(-desires)[:12]]
-        for c_idx in col_candidate_indices:
-            c_blob = living_blobs[c_idx]
-            if c_blob.colonize_cooldown == 0:
-                c_blob.colonize_desire = float(actions_batch[c_idx, 5])
-                success = self._try_colonize_or_relocate(c_blob, tod)
-                if not success:
-                    c_blob.colonize_cooldown = 15
+        if self.world_cfg.emergent_interactions:
+            # 1. Zuerst normale Nahrungssuche / Fressen ausführen
+            self._process_foraging(living_blobs, dt_scale, use_kin_cache=True)
+            # 2. Dann echte physikalische Interaktionen (Trophallaxis, Prädation, Vorrat-Ablegen, Nestbau)
+            self._process_emergent_interactions(living_blobs, actions_batch, nearest_peer_dists, dt_scale)
+        else:
+            # Vectorized colonize candidate detection using true coordinates
+            tod_56 = tod >= 0.56
+            dhx = self._kin_xs[:n_living] - self._kin_home_xs[:n_living]
+            dhy = self._kin_ys[:n_living] - self._kin_home_ys[:n_living]
+            dist_c_sq = dhx * dhx + dhy * dhy
+            col_cand_mask = (actions_batch[:, 5] > 0.08) & (dist_c_sq > 122500.0)
+            if tod_56:
+                col_cand_mask |= (dist_c_sq > 608400.0) & (actions_batch[:, 5] > 0.15)
+            col_candidate_indices = np.flatnonzero(col_cand_mask)
+            if len(col_candidate_indices) > 12:
+                desires = actions_batch[col_candidate_indices, 5]
+                col_candidate_indices = col_candidate_indices[np.argsort(-desires)[:12]]
+            for c_idx in col_candidate_indices:
+                c_blob = living_blobs[c_idx]
+                if c_blob.colonize_cooldown == 0:
+                    c_blob.colonize_desire = float(actions_batch[c_idx, 5])
+                    success = self._try_colonize_or_relocate(c_blob, tod)
+                    if not success:
+                        c_blob.colonize_cooldown = 15
 
-        # -------------------------------------------------------------
-        # 2. Vectorized Numba Peer Filter & Active Interactions
-        # -------------------------------------------------------------
-        peer_reach = 44.0 + (dt_scale - 1.0) * 2.2
-        if n_living > 1 and getattr(self, "_last_min_p_idxs", None) is not None and len(self._last_min_p_idxs) >= n_living:
-            min_p_idxs = self._last_min_p_idxs[:n_living]
-            active_i, active_j, active_kind = filter_active_peers_numba(
+            # -------------------------------------------------------------
+            # 2. Vectorized Numba Peer Filter & Active Interactions
+            # -------------------------------------------------------------
+            peer_reach = 44.0 + (dt_scale - 1.0) * 2.2
+            if n_living > 1 and getattr(self, "_last_min_p_idxs", None) is not None and len(self._last_min_p_idxs) >= n_living:
+                min_p_idxs = self._last_min_p_idxs[:n_living]
+                active_i, active_j, active_kind = filter_active_peers_numba(
+                    n_living,
+                    min_p_idxs,
+                    nearest_peer_dists[:n_living],
+                    peer_reach,
+                    actions_batch[:, 4],
+                    actions_batch[:, 3],
+                    self._kin_foods_today[:n_living],
+                    self._kin_surplus_foods[:n_living],
+                    self._kin_moneys[:n_living],
+                    self._kin_energies[:n_living],
+                    self._kin_reputations[:n_living],
+                    self._kin_gids[:n_living],
+                    self._kin_hids[:n_living],
+                    self._kin_tcooldowns[:n_living],
+                    surv_target,
+                    repro_target,
+                    self.world_cfg.base_food_price * 0.55,
+                )
+            else:
+                active_i = np.empty(0, dtype=np.int32)
+                active_j = np.empty(0, dtype=np.int32)
+                active_kind = np.empty(0, dtype=np.int32)
+
+            for k in range(len(active_i)):
+                i = int(active_i[k])
+                j = int(active_j[k])
+                kind = int(active_kind[k])
+
+                blob = living_blobs[i]
+                p = living_blobs[j]
+                if not p.alive:
+                    continue
+
+                if (kind & 1):
+                    blob.social_desire = float(actions_batch[i, 4])
+                    p.social_desire = float(actions_batch[j, 4])
+                    if self._handle_social_encounter(blob, p):
+                        if not self.world_cfg.intrinsic_homeostasis:
+                            bonus = self.prefs.pref_social * 0.45
+                            blob.last_reward += bonus
+                            blob.cumulative_reward += bonus
+                            step_rewards[i] += bonus * 2.5
+
+                traded = False
+                if (kind & 2):
+                    blob.trade_desire = float(actions_batch[i, 3])
+                    p.trade_desire = float(actions_batch[j, 3])
+                    traded = self._try_peer_trade(blob, p)
+
+                if not traded and (kind & 4):
+                    blob.social_desire = float(actions_batch[i, 4])
+                    blob.trade_desire = float(actions_batch[i, 3])
+                    self._try_peer_raid(blob, p)
+
+            # -------------------------------------------------------------
+            # 3. Vectorized Numba Market Filter & Village Trades
+            # -------------------------------------------------------------
+            groups_with_depot_food = {
+                h.group_id for h in self.homes.values() if h.group_id is not None and h.food_depot >= 0.5
+            }
+            if getattr(self, "_market_grp_has_depot", None) is None:
+                self._market_grp_has_depot = np.zeros(512, dtype=np.bool_)
+                self._homes_gold_arr = np.zeros(1024, dtype=np.float32)
+                self._homes_depot_arr = np.zeros(1024, dtype=np.float32)
+
+            self._market_grp_has_depot.fill(False)
+            max_gid = 0
+            for gid in groups_with_depot_food:
+                if 0 <= gid < 512:
+                    self._market_grp_has_depot[gid] = True
+                    if gid > max_gid:
+                        max_gid = gid
+
+            homes_gold = self._homes_gold_arr
+            homes_depot = self._homes_depot_arr
+            for hid, h in self.homes.items():
+                if hid < 1024:
+                    homes_gold[hid] = h.gold_vault
+                    homes_depot[hid] = h.food_depot
+
+            active_market_indices = filter_active_market_numba(
                 n_living,
-                min_p_idxs,
-                nearest_peer_dists[:n_living],
-                peer_reach,
-                actions_batch[:, 4],
-                actions_batch[:, 3],
+                self._kin_is_at_home_int[:n_living],
+                self._kin_tcooldowns[:n_living],
                 self._kin_foods_today[:n_living],
                 self._kin_surplus_foods[:n_living],
                 self._kin_moneys[:n_living],
                 self._kin_energies[:n_living],
-                self._kin_reputations[:n_living],
+                actions_batch[:, 3],
                 self._kin_gids[:n_living],
                 self._kin_hids[:n_living],
-                self._kin_tcooldowns[:n_living],
+                homes_gold,
+                homes_depot,
+                self._market_grp_has_depot,
+                max_gid,
+                tod,
                 surv_target,
                 repro_target,
-                self.world_cfg.base_food_price * 0.55,
             )
-        else:
-            active_i = np.empty(0, dtype=np.int32)
-            active_j = np.empty(0, dtype=np.int32)
-            active_kind = np.empty(0, dtype=np.int32)
 
-        for k in range(len(active_i)):
-            i = int(active_i[k])
-            j = int(active_j[k])
-            kind = int(active_kind[k])
+            for idx in active_market_indices:
+                idx_int = int(idx)
+                blob = living_blobs[idx_int]
+                home_obj = home_objs[idx_int]
+                if home_obj is not None:
+                    blob.trade_desire = float(actions_batch[idx_int, 3])
+                    if self._try_village_market_trade(blob, home_obj, groups_with_depot_food=groups_with_depot_food, tod=tod):
+                        hid = home_obj.id
+                        if hid < 1024:
+                            homes_gold[hid] = home_obj.gold_vault
+                            homes_depot[hid] = home_obj.food_depot
 
-            blob = living_blobs[i]
-            p = living_blobs[j]
-            if not p.alive:
-                continue
-
-            if (kind & 1):
-                blob.social_desire = float(actions_batch[i, 4])
-                p.social_desire = float(actions_batch[j, 4])
-                if self._handle_social_encounter(blob, p):
-                    if not self.world_cfg.intrinsic_homeostasis:
-                        bonus = self.prefs.pref_social * 0.45
-                        blob.last_reward += bonus
-                        blob.cumulative_reward += bonus
-                        step_rewards[i] += bonus * 2.5
-
-            traded = False
-            if (kind & 2):
-                blob.trade_desire = float(actions_batch[i, 3])
-                p.trade_desire = float(actions_batch[j, 3])
-                traded = self._try_peer_trade(blob, p)
-
-            if not traded and (kind & 4):
-                blob.social_desire = float(actions_batch[i, 4])
-                blob.trade_desire = float(actions_batch[i, 3])
-                self._try_peer_raid(blob, p)
-
-        # -------------------------------------------------------------
-        # 3. Vectorized Numba Market Filter & Village Trades
-        # -------------------------------------------------------------
-        groups_with_depot_food = {
-            h.group_id for h in self.homes.values() if h.group_id is not None and h.food_depot >= 0.5
-        }
-        if getattr(self, "_market_grp_has_depot", None) is None:
-            self._market_grp_has_depot = np.zeros(512, dtype=np.bool_)
-            self._homes_gold_arr = np.zeros(1024, dtype=np.float32)
-            self._homes_depot_arr = np.zeros(1024, dtype=np.float32)
-
-        self._market_grp_has_depot.fill(False)
-        max_gid = 0
-        for gid in groups_with_depot_food:
-            if 0 <= gid < 512:
-                self._market_grp_has_depot[gid] = True
-                if gid > max_gid:
-                    max_gid = gid
-
-        homes_gold = self._homes_gold_arr
-        homes_depot = self._homes_depot_arr
-        for hid, h in self.homes.items():
-            if hid < 1024:
-                homes_gold[hid] = h.gold_vault
-                homes_depot[hid] = h.food_depot
-
-        active_market_indices = filter_active_market_numba(
-            n_living,
-            self._kin_is_at_home_int[:n_living],
-            self._kin_tcooldowns[:n_living],
-            self._kin_foods_today[:n_living],
-            self._kin_surplus_foods[:n_living],
-            self._kin_moneys[:n_living],
-            self._kin_energies[:n_living],
-            actions_batch[:, 3],
-            self._kin_gids[:n_living],
-            self._kin_hids[:n_living],
-            homes_gold,
-            homes_depot,
-            self._market_grp_has_depot,
-            max_gid,
-            tod,
-            surv_target,
-            repro_target,
-        )
-
-        for idx in active_market_indices:
-            idx_int = int(idx)
-            blob = living_blobs[idx_int]
-            home_obj = home_objs[idx_int]
-            if home_obj is not None:
-                blob.trade_desire = float(actions_batch[idx_int, 3])
-                if self._try_village_market_trade(blob, home_obj, groups_with_depot_food=groups_with_depot_food, tod=tod):
-                    hid = home_obj.id
-                    if hid < 1024:
-                        homes_gold[hid] = home_obj.gold_vault
-                        homes_depot[hid] = home_obj.food_depot
-
-        self._process_foraging(living_blobs, dt_scale, use_kin_cache=True)
+            self._process_foraging(living_blobs, dt_scale, use_kin_cache=True)
 
         if self.world_cfg.intrinsic_homeostasis:
             delta_e = (self._kin_energies[:n_living] - prev_energies) * np.float32(1.0 / 25.0)
@@ -3763,6 +3821,180 @@ class SimulationWorld:
             elif self.tick_in_day >= tpd:
                 self._end_of_day_accounting(amortize_food=True)
         return dt
+
+    def _process_emergent_interactions(
+        self,
+        living_blobs: List[Blob],
+        actions_batch: np.ndarray,
+        nearest_peer_dists: np.ndarray,
+        dt_scale: float,
+    ) -> None:
+        """
+        Physical emergent interactions replacing scripted menus:
+        1. Peer contact interactions via Output 3 (distance < 32.0, trade_cooldown == 0):
+           - Trophallaxis (Output 3 > 0.35, energy > 36.0): Give 6.0 energy to neighbor (90% eff = 5.4), cooldown 15.
+           - Predation bite (Output 3 < -0.45, energy > 22.0): Combat power governed damage with rock cover dampening, cooldown 22.
+        2. Environment manipulation via Output 5 (colonize_cooldown == 0):
+           - Stash food item (Output 5 > 0.50, surplus >= 0.30 or (food_today >= 1.3 and energy > 65.0)):
+             Deduct 0.30 food, spawn FoodItem behind blob, cooldown 45.
+           - Build shelter rock (Output 5 < -0.65, energy > 60.0, len(obstacles) < 420):
+             Max 2 worldwide per tick, invest 14.0 energy, place TerrainObstacle behind blob, cooldown 240.
+        """
+        n_living = len(living_blobs)
+        if n_living == 0:
+            return
+
+        min_p_idxs = getattr(self, "_last_min_p_idxs", None)
+        tcds = self._kin_tcooldowns[:n_living]
+        energies = self._kin_energies[:n_living]
+
+        # a) Kontakt-Interaktion mit dem nächsten Nachbarn (Distanz < 32.0 und trade_cooldown == 0)
+        if min_p_idxs is not None and len(min_p_idxs) >= n_living:
+            dists = nearest_peer_dists[:n_living]
+            act3 = actions_batch[:, 3]
+            contact_cand_mask = (
+                (tcds == 0)
+                & (dists < 32.0)
+                & ((act3 > 0.35) | (act3 < -0.45))
+            )
+            contact_indices = np.flatnonzero(contact_cand_mask)
+            for i in contact_indices:
+                blob_i = living_blobs[i]
+                if not blob_i.alive or energies[i] <= 0.0 or blob_i.trade_cooldown > 0:
+                    continue
+                j = int(min_p_idxs[i])
+                if j < 0 or j >= n_living or j == i:
+                    continue
+                blob_j = living_blobs[j]
+                if not blob_j.alive or energies[j] <= 0.0:
+                    continue
+
+                act_interact = act3[i]
+                # Trophallaxis / Füttern (act_interact > 0.35 und energy > 36.0)
+                if act_interact > 0.35 and energies[i] > 36.0:
+                    blob_i.energy -= 6.0
+                    energies[i] = blob_i.energy
+                    blob_j.energy = min(blob_j.max_energy, blob_j.energy + 5.4)
+                    energies[j] = blob_j.energy
+                    blob_i.trade_cooldown = 15
+                    tcds[i] = 15
+                    blob_i.trades_made += 1
+                    self.trades_today += 1
+                    self.total_trades_all_time += 1
+                    self.recent_trade_lines.append(
+                        {
+                            "x1": round(blob_i.x, 1),
+                            "y1": round(blob_i.y, 1),
+                            "x2": round(blob_j.x, 1),
+                            "y2": round(blob_j.y, 1),
+                            "same_group": (blob_i.group_id is not None and blob_i.group_id == blob_j.group_id),
+                            "tick": self.tick_count,
+                        }
+                    )
+                # Physischer Biss / Prädation (act_interact < -0.45 und energy > 22.0)
+                elif act_interact < -0.45 and energies[i] > 22.0:
+                    has_cover = self._point_hits_rock(blob_j.x, blob_j.y, pad=45.0)
+                    atk_power = blob_i.combat_power
+                    def_power = blob_j.combat_power * (1.35 if has_cover else 1.0)
+                    blob_i.energy = max(0.0, blob_i.energy - 3.5)
+                    energies[i] = blob_i.energy
+                    dmg = min(blob_j.energy, 15.0 * (atk_power / max(0.35, def_power)))
+                    blob_j.energy = max(0.0, blob_j.energy - dmg)
+                    energies[j] = blob_j.energy
+                    blob_i.energy = min(blob_i.max_energy, blob_i.energy + 0.65 * dmg)
+                    energies[i] = blob_i.energy
+                    blob_i.trade_cooldown = 22
+                    tcds[i] = 22
+                    blob_i.raids_won += 1
+                    self.raids_today += 1
+                    self.total_raids_all_time += 1
+                    self.recent_raid_lines.append(
+                        {
+                            "x1": round(blob_i.x, 1),
+                            "y1": round(blob_i.y, 1),
+                            "x2": round(blob_j.x, 1),
+                            "y2": round(blob_j.y, 1),
+                            "repelled": False,
+                            "tick": self.tick_count,
+                        }
+                    )
+
+        # b) Physische Umwelt-Manipulation (colonize_cooldown == 0) über Output 5
+        ccds = self._kin_ccooldowns[:n_living]
+        act5 = actions_batch[:, 5]
+        manip_cand_mask = (ccds == 0) & ((act5 > 0.50) | (act5 < -0.65))
+        manip_indices = np.flatnonzero(manip_cand_mask)
+        built_rocks_count = 0
+        w_width = self.world_cfg.width
+        w_height = self.world_cfg.height
+
+        for i in manip_indices:
+            blob = living_blobs[i]
+            if not blob.alive or energies[i] <= 0.0 or blob.colonize_cooldown > 0:
+                continue
+            act_manip = act5[i]
+
+            # Nahrungs-Vorrat ablegen
+            if act_manip > 0.50:
+                has_surplus = (blob.surplus_food >= 0.30)
+                has_stomach_surplus = (blob.food_today >= 1.3 and energies[i] > 65.0)
+                if has_surplus or has_stomach_surplus:
+                    hd = blob.heading
+                    drop_dist = blob.body_radius + 15.0
+                    fx = float(np.clip(blob.x - math.cos(hd) * drop_dist, 25.0, w_width - 25.0))
+                    fy = float(np.clip(blob.y - math.sin(hd) * drop_dist, 25.0, w_height - 25.0))
+                    if not self._point_hits_rock(fx, fy, pad=6.0):
+                        blob.deduct_traded_food(0.30)
+                        self._kin_foods_today[i] = blob.food_today
+                        self._kin_surplus_foods[i] = blob.surplus_food
+                        fid = self._next_food_id
+                        self._next_food_id += 1
+                        self.foods.append(FoodItem(id=fid, x=fx, y=fy, nutrition=0.30, golden=False, oasis_id=None))
+                        self.food_version += 1
+                        self._food_dirty = True
+                        self.recent_eaten_indices.clear()
+                        blob.colonize_cooldown = 45
+                        ccds[i] = 45
+
+            # Schutzwall / Nest-Stein aufschichten
+            elif act_manip < -0.65:
+                if (
+                    built_rocks_count < 2
+                    and energies[i] > 60.0
+                    and len(self.obstacles) < 420
+                    and (nearest_peer_dists[i] > 38.0 if len(nearest_peer_dists) > i else True)
+                ):
+                    hd = blob.heading
+                    wall_dist = blob.body_radius + 22.0
+                    cx = float(np.clip(blob.x - math.cos(hd) * wall_dist, 60.0, w_width - 60.0))
+                    cy = float(np.clip(blob.y - math.sin(hd) * wall_dist, 60.0, w_height - 60.0))
+
+                    # Prüfen, ob Abstand zu bestehenden Homes eingehalten wird
+                    too_close_home = False
+                    for h in self.homes.values():
+                        if math.hypot(cx - h.x, cy - h.y) < (h.radius + 24.0):
+                            too_close_home = True
+                            break
+
+                    if not too_close_home:
+                        # Quer zum Blob ausrichten (tx = -sin(hd), ty = cos(hd))
+                        half_len = 14.0
+                        tx = -math.sin(hd)
+                        ty = math.cos(hd)
+                        x1 = float(np.clip(cx - tx * half_len, 20.0, w_width - 20.0))
+                        y1 = float(np.clip(cy - ty * half_len, 20.0, w_height - 20.0))
+                        x2 = float(np.clip(cx + tx * half_len, 20.0, w_width - 20.0))
+                        y2 = float(np.clip(cy + ty * half_len, 20.0, w_height - 20.0))
+
+                        blob.energy -= 14.0
+                        energies[i] = blob.energy
+                        blob.colonize_cooldown = 240
+                        ccds[i] = 240
+                        self._add_obstacle("rock", x1, y1, x2, y2, 16.0, gate_kind="nest")
+                        built_rocks_count += 1
+
+        if built_rocks_count > 0:
+            self._rebuild_obstacle_arrays()
 
     def _process_foraging(
         self, living_blobs: List[Blob], dt_scale: float = 1.0, use_kin_cache: bool = False

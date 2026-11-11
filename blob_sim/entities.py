@@ -450,6 +450,7 @@ class Blob:
         self._surplus_food: float = 0.0         # Extra carried food beyond reproduction threshold
         self._money: float = float(money)       # Persistent currency from selling food
         self._reputation: float = round(float(np.clip(reputation, -1.0, 1.0)), 3)  # Social reputation [-1.0..+1.0]
+        self._signal_value: float = 0.0         # Emergent communication / bioluminescent signal [-1.0..+1.0]
         self._ticks_since_last_meal: int = 0    # Dies if exceeds max_starvation_ticks
 
         # Action, Memory & Colonization states (cached across cohort ticks)
@@ -735,6 +736,25 @@ class Blob:
         return self.reputation >= 0.35
 
     @property
+    def signal_value(self) -> float:
+        """Bioluminescent/chemical signal value in [-1.0, +1.0]."""
+        ref = getattr(self, "_kin_ref", None)
+        kidx = getattr(self, "_kin_idx", -1)
+        if ref is not None and 0 <= kidx < getattr(ref, "_kin_cap", 0):
+            return float(ref._kin_signals[kidx])
+        return self._signal_value
+
+    @signal_value.setter
+    def signal_value(self, val: float) -> None:
+        fval = float(val)
+        c = -1.0 if fval < -1.0 else (1.0 if fval > 1.0 else fval)
+        self._signal_value = c
+        ref = getattr(self, "_kin_ref", None)
+        kidx = getattr(self, "_kin_idx", -1)
+        if ref is not None and 0 <= kidx < getattr(ref, "_kin_cap", 0):
+            ref._kin_signals[kidx] = c
+
+    @property
     def reputation(self) -> float:
         """Social reputation score in [-1.0, +1.0]."""
         return self._reputation
@@ -850,6 +870,7 @@ class Blob:
             "max_food": float(self.max_food_capacity),
             "money": round(float(self.money), 1),
             "reputation": round(float(self.reputation), 2),
+            "signal": round(float(self.signal_value), 2),
             "home_id": self.home_id,
             "home_x": round(float(self.home_x), 1) if self.home_x is not None else 0.0,
             "home_y": round(float(self.home_y), 1) if self.home_y is not None else 0.0,
