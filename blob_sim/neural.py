@@ -123,6 +123,8 @@ class BlobBrain:
         rng: Optional[np.random.Generator] = None,
         _copy_arrays: bool = True,
         innate_seed: float = 0.72,
+        innate_weights: Optional[List[np.ndarray]] = None,
+        innate_biases: Optional[List[np.ndarray]] = None,
     ) -> None:
         self.config = NetworkConfig(
             depth=config.depth,
@@ -130,6 +132,7 @@ class BlobBrain:
             custom_layers=list(config.custom_layers) if config.custom_layers else None,
             activation=config.activation,
             recurrent_dim=getattr(config, "recurrent_dim", 0),
+            baldwin_plasticity=getattr(config, "baldwin_plasticity", False),
         )
         self.rng = rng or np.random.default_rng()
         self.recurrent_dim = self.config.get_recurrent_dim()
@@ -199,6 +202,21 @@ class BlobBrain:
                     ob, nb = biases[i], self.biases[i]
                     cb = min(ob.shape[0], nb.shape[0])
                     nb[:cb] = ob[:cb].astype(np.float32)
+
+        if self.config.baldwin_plasticity:
+            if innate_weights is not None and innate_biases is not None and len(innate_weights) == len(self.weights):
+                if _copy_arrays:
+                    self.innate_weights: List[np.ndarray] = [w.astype(np.float32, copy=True) for w in innate_weights]
+                    self.innate_biases: List[np.ndarray] = [b.astype(np.float32, copy=True) for b in innate_biases]
+                else:
+                    self.innate_weights = innate_weights
+                    self.innate_biases = innate_biases
+            else:
+                self.innate_weights = [w.copy() for w in self.weights]
+                self.innate_biases = [b.copy() for b in self.biases]
+        else:
+            self.innate_weights = []
+            self.innate_biases = []
 
         self._param_count: int = sum(
             int(w.size + b.size) for w, b in zip(self.weights, self.biases, strict=True)
@@ -372,14 +390,27 @@ class BlobBrain:
         tw_list = self.traces_w
         tb_list = self.traces_b
 
+        use_baldwin = self.config.baldwin_plasticity and bool(self.innate_weights)
         for idx in range(len(self.weights)):
             w = self.weights[idx]
             w += step * tw_list[idx]
-            _umath_clip(w, _F32_W_MIN, _F32_W_MAX, out=w)
+            if use_baldwin:
+                w_in = self.innate_weights[idx]
+                w_lower = np.maximum(_F32_W_MIN, w_in - np.float32(1.5))
+                w_upper = np.minimum(_F32_W_MAX, w_in + np.float32(1.5))
+                np.clip(w, w_lower, w_upper, out=w)
+            else:
+                _umath_clip(w, _F32_W_MIN, _F32_W_MAX, out=w)
 
             b = self.biases[idx]
             b += half_step * tb_list[idx]
-            _umath_clip(b, _F32_B_MIN, _F32_B_MAX, out=b)
+            if use_baldwin:
+                b_in = self.innate_biases[idx]
+                b_lower = np.maximum(_F32_B_MIN, b_in - np.float32(1.2))
+                b_upper = np.minimum(_F32_B_MAX, b_in + np.float32(1.2))
+                np.clip(b, b_lower, b_upper, out=b)
+            else:
+                _umath_clip(b, _F32_B_MIN, _F32_B_MAX, out=b)
 
     def _mutate_layer_arrays(
         self, w: np.ndarray, b: np.ndarray, mutation_rate: float, mut_rate_f32: np.float32, mut_str_f32: np.float32
@@ -438,54 +469,79 @@ class BlobBrain:
         mut_str = float(mutation_strength)
         num_layers = len(self.weights)
 
-        # Cloned copies of parent B weights to prevent in-place mutation of live arrays
+        use_baldwin = self.config.baldwin_plasticity and bool(self.innate_weights)
+        base_w = self.innate_weights if use_baldwin else self.weights
+        base_b = self.innate_biases if use_baldwin else self.biases
+
+        # Cloned copies of partner base weights to prevent in-place mutation of live arrays
         if can_crossover and partner is not None:
-            aligned_pw = [w.copy() for w in partner.weights]
-            aligned_pb = [b.copy() for b in partner.biases]
+            partner_base_w = partner.innate_weights if (use_baldwin and partner.innate_weights) else partner.weights
+            partner_base_b = partner.innate_biases if (use_baldwin and partner.innate_biases) else partner.biases
+            pw_aligned = [w.copy() for w in partner_base_w]
+            pb_aligned = [b.copy() for b in partner_base_b]
 
-            # Bottom-up functional neuron alignment on hidden layers
-            for l in range(num_layers - 1):
-                H = aligned_pb[l].shape[0]
-                # Augmented incoming feature vectors [W; b]
-                feat_a = np.vstack([self.weights[l], self.biases[l][None, :]])  # (rows+1, H)
-                feat_b = np.vstack([aligned_pw[l], aligned_pb[l][None, :]])     # (rows+1, H)
+            if use_baldwin:
+                for lay in range(len(base_w) - 1):
+                    W_A = base_w[lay]
+                    W_B = pw_aligned[lay]
+                    norm_A = W_A / (np.linalg.norm(W_A, axis=0, keepdims=True) + 1e-8)
+                    norm_B = W_B / (np.linalg.norm(W_B, axis=0, keepdims=True) + 1e-8)
+                    sim = norm_A.T @ norm_B  # (H, H)
+                    H = sim.shape[0]
 
-                norm_a = np.linalg.norm(feat_a, axis=0, keepdims=True) + 1e-8
-                norm_b = np.linalg.norm(feat_b, axis=0, keepdims=True) + 1e-8
-                sim_matrix = (feat_a / norm_a).T @ (feat_b / norm_b)  # (H, H)
+                    perm = np.full(H, -1, dtype=np.int32)
+                    used_k = set()
+                    for j in range(H):
+                        row = sim[j].copy()
+                        for uk in used_k:
+                            row[uk] = -1e9
+                        best_k = int(np.argmax(row))
+                        perm[j] = best_k
+                        used_k.add(best_k)
 
-                # Global-max greedy bipartite matching
-                pi = np.full(H, -1, dtype=np.int32)
-                matched_a = set()
-                matched_b = set()
-                sim_flat = sim_matrix.flatten()
-                sorted_pairs = np.argsort(-sim_flat)
-                for pair_idx in sorted_pairs:
-                    j = pair_idx // H
-                    k = pair_idx % H
-                    if j not in matched_a and k not in matched_b:
-                        pi[j] = k
-                        matched_a.add(j)
-                        matched_b.add(k)
-                        if len(matched_a) == H:
-                            break
+                    pw_aligned[lay] = pw_aligned[lay][:, perm]
+                    pb_aligned[lay] = pb_aligned[lay][perm]
+                    pw_aligned[lay + 1] = pw_aligned[lay + 1][perm, :]
+            else:
+                for l in range(num_layers - 1):
+                    H = pb_aligned[l].shape[0]
+                    feat_a = np.vstack([self.weights[l], self.biases[l][None, :]])  # (rows+1, H)
+                    feat_b = np.vstack([pw_aligned[l], pb_aligned[l][None, :]])     # (rows+1, H)
 
-                # Apply permutation pi to columns of l, biases of l, and rows of l+1
-                aligned_pw[l] = aligned_pw[l][:, pi]
-                aligned_pb[l] = aligned_pb[l][pi]
-                aligned_pw[l + 1] = aligned_pw[l + 1][pi, :]
+                    norm_a = np.linalg.norm(feat_a, axis=0, keepdims=True) + 1e-8
+                    norm_b = np.linalg.norm(feat_b, axis=0, keepdims=True) + 1e-8
+                    sim_matrix = (feat_a / norm_a).T @ (feat_b / norm_b)  # (H, H)
+
+                    pi = np.full(H, -1, dtype=np.int32)
+                    matched_a = set()
+                    matched_b = set()
+                    sim_flat = sim_matrix.flatten()
+                    sorted_pairs = np.argsort(-sim_flat)
+                    for pair_idx in sorted_pairs:
+                        j = pair_idx // H
+                        k = pair_idx % H
+                        if j not in matched_a and k not in matched_b:
+                            pi[j] = k
+                            matched_a.add(j)
+                            matched_b.add(k)
+                            if len(matched_a) == H:
+                                break
+
+                    pw_aligned[l] = pw_aligned[l][:, pi]
+                    pb_aligned[l] = pb_aligned[l][pi]
+                    pw_aligned[l + 1] = pw_aligned[l + 1][pi, :]
         else:
-            aligned_pw = self.weights
-            aligned_pb = self.biases
+            pw_aligned = base_w
+            pb_aligned = base_b
 
         new_weights: List[np.ndarray] = []
         new_biases: List[np.ndarray] = []
 
         for idx in range(num_layers):
-            w = self.weights[idx]
-            b = self.biases[idx]
-            pw = aligned_pw[idx]
-            pb = aligned_pb[idx]
+            w = base_w[idx]
+            b = base_b[idx]
+            pw = pw_aligned[idx]
+            pb = pb_aligned[idx]
 
             new_w, new_b = mutate_neural_layer_numba(
                 w, b, pw, pb, can_crossover, mut_rate, mut_str
@@ -493,13 +549,26 @@ class BlobBrain:
             new_weights.append(new_w)
             new_biases.append(new_b)
 
-        child = BlobBrain(
-            config=self.config,
-            weights=new_weights,
-            biases=new_biases,
-            rng=self.rng,
-            _copy_arrays=False,
-        )
+        if use_baldwin:
+            child_weights = [w.copy() for w in new_weights]
+            child_biases = [b.copy() for b in new_biases]
+            child = BlobBrain(
+                config=self.config,
+                weights=child_weights,
+                biases=child_biases,
+                rng=self.rng,
+                _copy_arrays=False,
+                innate_weights=new_weights,
+                innate_biases=new_biases,
+            )
+        else:
+            child = BlobBrain(
+                config=self.config,
+                weights=new_weights,
+                biases=new_biases,
+                rng=self.rng,
+                _copy_arrays=False,
+            )
         if self.recurrent_dim > 0 and self.hidden_state is not None:
             child.hidden_state = np.zeros((self.recurrent_dim,), dtype=np.float32)
         if partner is not None:
@@ -644,6 +713,9 @@ class BlobBrain:
             "weights": [w.copy() for w in self.weights],
             "biases": [b.copy() for b in self.biases],
         }
+        if self.config.baldwin_plasticity and self.innate_weights:
+            res["innate_weights"] = [w.copy() for w in self.innate_weights]
+            res["innate_biases"] = [b.copy() for b in self.innate_biases]
         if self.recurrent_dim > 0 and self.hidden_state is not None:
             res["hidden_state"] = self.hidden_state.copy()
         return res
@@ -656,6 +728,9 @@ class BlobBrain:
             "weights": [w.tolist() for w in self.weights],
             "biases": [b.tolist() for b in self.biases],
         }
+        if self.config.baldwin_plasticity and self.innate_weights:
+            res["innate_weights"] = [w.tolist() for w in self.innate_weights]
+            res["innate_biases"] = [b.tolist() for b in self.innate_biases]
         if self.recurrent_dim > 0 and self.hidden_state is not None:
             res["hidden_state"] = self.hidden_state.tolist()
         return res
@@ -669,10 +744,21 @@ class BlobBrain:
             custom_layers=cfg_data.get("custom_layers"),
             activation=cfg_data.get("activation", "tanh"),
             recurrent_dim=cfg_data.get("recurrent_dim", 0),
+            baldwin_plasticity=cfg_data.get("baldwin_plasticity", False),
         )
         weights = [np.asarray(w, dtype=np.float32) for w in data.get("weights", [])]
         biases = [np.asarray(b, dtype=np.float32) for b in data.get("biases", [])]
-        brain = cls(config=cfg, weights=weights, biases=biases, rng=rng, _copy_arrays=True)
+        innate_w = [np.asarray(w, dtype=np.float32) for w in data["innate_weights"]] if "innate_weights" in data else None
+        innate_b = [np.asarray(b, dtype=np.float32) for b in data["innate_biases"]] if "innate_biases" in data else None
+        brain = cls(
+            config=cfg,
+            weights=weights,
+            biases=biases,
+            rng=rng,
+            _copy_arrays=True,
+            innate_weights=innate_w,
+            innate_biases=innate_b,
+        )
         if brain.recurrent_dim > 0 and "hidden_state" in data:
             hs = np.asarray(data["hidden_state"], dtype=np.float32)
             if hs.shape == (brain.recurrent_dim,):
@@ -703,6 +789,8 @@ class BatchedBrainPool:
         self._W_cap: List[np.ndarray] = []
         self._B_cap: List[np.ndarray] = []
         self._TB_cap: List[np.ndarray] = []
+        self._W_innate_cap: List[np.ndarray] = []
+        self._B_innate_cap: List[np.ndarray] = []
         self._A_hist_cap: List[np.ndarray] = []
         self._D_hist_cap: List[np.ndarray] = []
         self._Z_cap: List[np.ndarray] = []
@@ -743,6 +831,8 @@ class BatchedBrainPool:
         self._W_cap.clear()
         self._B_cap.clear()
         self._TB_cap.clear()
+        self._W_innate_cap.clear()
+        self._B_innate_cap.clear()
         self._A_hist_cap.clear()
         self._D_hist_cap.clear()
         self._Z_cap.clear()
@@ -774,12 +864,21 @@ class BatchedBrainPool:
         coef = self._accum_coef_cap[slot, :active_k]
         if not np.any(coef != _F32_ZERO):
             return
+        has_innate = bool(self._W_innate_cap)
         for idx in range(len(self._W_cap)):
             a_s = self._A_hist_cap[idx][slot, :, :active_k] * coef[None, :]
             d_s = self._D_hist_cap[idx][slot, :active_k, :]
             w = self._W_cap[idx][slot]
             w += a_s @ d_s
-            _umath_clip(w, _F32_W_MIN, _F32_W_MAX, out=w)
+            if has_innate:
+                w_in = self._W_innate_cap[idx][slot]
+                w *= np.float32(0.998)
+                w += np.float32(0.002) * w_in
+                w_lower = np.maximum(_F32_W_MIN, w_in - np.float32(1.5))
+                w_upper = np.minimum(_F32_W_MAX, w_in + np.float32(1.5))
+                np.clip(w, w_lower, w_upper, out=w)
+            else:
+                _umath_clip(w, _F32_W_MIN, _F32_W_MAX, out=w)
         self._accum_coef_cap[slot, :active_k] = _F32_ZERO
 
     def apply_single_brain_learning(self, brain: BlobBrain, reward: float, learning_rate: float) -> None:
@@ -821,7 +920,7 @@ class BatchedBrainPool:
             b += half_step * self._TB_cap[idx][slot]
             _umath_clip(b, _F32_B_MIN, _F32_B_MAX, out=b)
 
-    def _allocate_capacity(self, dims: List[int], new_cap: int, preserve_n: int = 0) -> None:
+    def _allocate_capacity(self, dims: List[int], new_cap: int, preserve_n: int = 0, baldwin_plasticity: bool = False) -> None:
         num_layers = len(dims) - 1
         is_large = max(dims) > 512
         trace_rank = _get_trace_rank_for_dims(dims)
@@ -842,6 +941,8 @@ class BatchedBrainPool:
         new_W_cap: List[np.ndarray] = []
         new_B_cap: List[np.ndarray] = []
         new_TB_cap: List[np.ndarray] = []
+        new_W_innate_cap: List[np.ndarray] = []
+        new_B_innate_cap: List[np.ndarray] = []
         new_A_cap: List[np.ndarray] = []
         new_D_cap: List[np.ndarray] = []
         new_Z_cap: List[np.ndarray] = []
@@ -884,6 +985,14 @@ class BatchedBrainPool:
             new_D_cap.append(d_arr)
             new_Z_cap.append(z_arr)
             new_D_back_cap.append(db_arr)
+            if baldwin_plasticity:
+                w_in_arr = np.empty((new_cap, fan_in, fan_out), dtype=np.float32)
+                b_in_arr = np.empty((new_cap, fan_out), dtype=np.float32)
+                if topology_same and preserve_n > 0 and len(self._W_innate_cap) == num_layers:
+                    w_in_arr[:preserve_n] = self._W_innate_cap[lay][:preserve_n]
+                    b_in_arr[:preserve_n] = self._B_innate_cap[lay][:preserve_n]
+                new_W_innate_cap.append(w_in_arr)
+                new_B_innate_cap.append(b_in_arr)
 
         new_tw = np.zeros((new_cap, trace_rank), dtype=np.float32)
         new_ac = np.zeros((new_cap, trace_rank), dtype=np.float32)
@@ -900,6 +1009,8 @@ class BatchedBrainPool:
         self._W_cap = new_W_cap
         self._B_cap = new_B_cap
         self._TB_cap = new_TB_cap
+        self._W_innate_cap = new_W_innate_cap
+        self._B_innate_cap = new_B_innate_cap
         self._A_hist_cap = new_A_cap
         self._D_hist_cap = new_D_cap
         self._Z_cap = new_Z_cap
@@ -929,12 +1040,14 @@ class BatchedBrainPool:
 
         active_indices = np.where(active_mask)[0]
         num_layers = len(self.W_batch)
+        has_innate = bool(self._W_innate_cap)
         for idx in range(num_layers):
             w_lay = self.W_batch[idx]
             a_lay = self._A_hist_cap[idx]
             d_lay = self._D_hist_cap[idx]
             m_buf = self._matmul_buf[idx]
             a_buf = self._a_scaled_buf[idx]
+            w_in_lay = self._W_innate_cap[idx] if has_innate else None
 
             if len(active_indices) == n:
                 for s in range(0, n, _FLUSH_CHUNK):
@@ -946,7 +1059,15 @@ class BatchedBrainPool:
                     np.matmul(a_sub, d_lay[s:e, :active_k, :], out=dw_sub)
                     w_sub = w_lay[s:e]
                     w_sub += dw_sub
-                    _umath_clip(w_sub, _F32_W_MIN, _F32_W_MAX, out=w_sub)
+                    if has_innate and w_in_lay is not None:
+                        w_in_sub = w_in_lay[s:e]
+                        w_sub *= np.float32(0.998)
+                        w_sub += np.float32(0.002) * w_in_sub
+                        w_lower = np.maximum(_F32_W_MIN, w_in_sub - np.float32(1.5))
+                        w_upper = np.minimum(_F32_W_MAX, w_in_sub + np.float32(1.5))
+                        np.clip(w_sub, w_lower, w_upper, out=w_sub)
+                    else:
+                        _umath_clip(w_sub, _F32_W_MIN, _F32_W_MAX, out=w_sub)
             else:
                 for s in range(0, len(active_indices), _FLUSH_CHUNK):
                     chunk_indices = active_indices[s : s + _FLUSH_CHUNK]
@@ -956,7 +1077,15 @@ class BatchedBrainPool:
                     dw_sub = m_buf[:c_len]
                     np.matmul(a_sub, d_lay[chunk_indices, :active_k, :], out=dw_sub)
                     w_chunk = w_lay[chunk_indices] + dw_sub
-                    _umath_clip(w_chunk, _F32_W_MIN, _F32_W_MAX, out=w_chunk)
+                    if has_innate and w_in_lay is not None:
+                        w_in_chunk = w_in_lay[chunk_indices]
+                        w_chunk *= np.float32(0.998)
+                        w_chunk += np.float32(0.002) * w_in_chunk
+                        w_lower = np.maximum(_F32_W_MIN, w_in_chunk - np.float32(1.5))
+                        w_upper = np.minimum(_F32_W_MAX, w_in_chunk + np.float32(1.5))
+                        np.clip(w_chunk, w_lower, w_upper, out=w_chunk)
+                    else:
+                        _umath_clip(w_chunk, _F32_W_MIN, _F32_W_MAX, out=w_chunk)
                     w_lay[chunk_indices] = w_chunk
 
         self._accum_coef_cap[:n, :active_k] = _F32_ZERO
@@ -966,11 +1095,15 @@ class BatchedBrainPool:
         self, new_idx: int, old_slot: Optional[int], br: BlobBrain, num_layers: int
     ) -> None:
         rec_dim = self._recurrent_dim
+        has_innate = bool(self._W_innate_cap)
         if old_slot is not None:
             if old_slot != new_idx:
                 for lay in range(num_layers):
                     self._W_cap[lay][new_idx] = self._W_cap[lay][old_slot]
                     self._B_cap[lay][new_idx] = self._B_cap[lay][old_slot]
+                    if has_innate:
+                        self._W_innate_cap[lay][new_idx] = self._W_innate_cap[lay][old_slot]
+                        self._B_innate_cap[lay][new_idx] = self._B_innate_cap[lay][old_slot]
                     self._TB_cap[lay][new_idx] = self._TB_cap[lay][old_slot]
                     self._A_hist_cap[lay][new_idx] = self._A_hist_cap[lay][old_slot]
                     self._D_hist_cap[lay][new_idx] = self._D_hist_cap[lay][old_slot]
@@ -984,6 +1117,9 @@ class BatchedBrainPool:
             for lay in range(num_layers):
                 self._W_cap[lay][new_idx] = br.weights[lay]
                 self._B_cap[lay][new_idx] = br.biases[lay]
+                if has_innate and br.innate_weights:
+                    self._W_innate_cap[lay][new_idx] = br.innate_weights[lay]
+                    self._B_innate_cap[lay][new_idx] = br.innate_biases[lay]
                 self._TB_cap[lay][new_idx] = _F32_ZERO
                 self._A_hist_cap[lay][new_idx] = _F32_ZERO
                 self._D_hist_cap[lay][new_idx] = _F32_ZERO
@@ -1004,6 +1140,9 @@ class BatchedBrainPool:
         for lay in range(num_layers):
             br.weights[lay] = self._W_cap[lay][new_idx]
             br.biases[lay] = self._B_cap[lay][new_idx]
+            if has_innate and br.innate_weights:
+                br.innate_weights[lay] = self._W_innate_cap[lay][new_idx]
+                br.innate_biases[lay] = self._B_innate_cap[lay][new_idx]
         if rec_dim > 0:
             br.hidden_state = self._H_cap[new_idx]
 
@@ -1020,17 +1159,24 @@ class BatchedBrainPool:
             else False
         )
 
+        has_innate = bool(self._W_innate_cap)
         if not needs_cycle:
             for new_idx, br in enumerate(brains):
                 br._pool_ref = self
                 for lay in range(num_layers):
                     self._W_cap[lay][new_idx] = br.weights[lay]
                     self._B_cap[lay][new_idx] = br.biases[lay]
+                    if has_innate and br.innate_weights:
+                        self._W_innate_cap[lay][new_idx] = br.innate_weights[lay]
+                        self._B_innate_cap[lay][new_idx] = br.innate_biases[lay]
                     self._TB_cap[lay][new_idx] = _F32_ZERO
                     self._A_hist_cap[lay][new_idx] = _F32_ZERO
                     self._D_hist_cap[lay][new_idx] = _F32_ZERO
                     br.weights[lay] = self._W_cap[lay][new_idx]
                     br.biases[lay] = self._B_cap[lay][new_idx]
+                    if has_innate and br.innate_weights:
+                        br.innate_weights[lay] = self._W_innate_cap[lay][new_idx]
+                        br.innate_biases[lay] = self._B_innate_cap[lay][new_idx]
                 self._trace_weights_cap[new_idx] = _F32_ZERO
                 self._accum_coef_cap[new_idx] = _F32_ZERO
                 self._last_out_cap[new_idx] = _F32_ZERO
@@ -1045,11 +1191,16 @@ class BatchedBrainPool:
             old_slots = [self._slot_map.get(id(br)) for br in brains]
             saved_w: Dict[int, List[np.ndarray]] = {}
             saved_b: Dict[int, List[np.ndarray]] = {}
+            saved_iw: Dict[int, List[np.ndarray]] = {}
+            saved_ib: Dict[int, List[np.ndarray]] = {}
             saved_h: Dict[int, np.ndarray] = {}
             for new_idx, (br, old_slot) in enumerate(zip(brains, old_slots, strict=False)):
                 if old_slot is not None and old_slot != new_idx:
                     saved_w[new_idx] = [self._W_cap[lay][old_slot].copy() for lay in range(num_layers)]
                     saved_b[new_idx] = [self._B_cap[lay][old_slot].copy() for lay in range(num_layers)]
+                    if has_innate:
+                        saved_iw[new_idx] = [self._W_innate_cap[lay][old_slot].copy() for lay in range(num_layers)]
+                        saved_ib[new_idx] = [self._B_innate_cap[lay][old_slot].copy() for lay in range(num_layers)]
                     if rec_dim > 0:
                         saved_h[new_idx] = self._H_cap[old_slot].copy()
             for new_idx, br in enumerate(brains):
@@ -1058,16 +1209,27 @@ class BatchedBrainPool:
                     if new_idx in saved_w:
                         self._W_cap[lay][new_idx] = saved_w[new_idx][lay]
                         self._B_cap[lay][new_idx] = saved_b[new_idx][lay]
+                        if has_innate and new_idx in saved_iw:
+                            self._W_innate_cap[lay][new_idx] = saved_iw[new_idx][lay]
+                            self._B_innate_cap[lay][new_idx] = saved_ib[new_idx][lay]
                     else:
                         w_src = br.weights[lay]
                         if w_src.base is not self._W_cap[lay]:
                             self._W_cap[lay][new_idx] = w_src
                             self._B_cap[lay][new_idx] = br.biases[lay]
+                        if has_innate and br.innate_weights:
+                            iw_src = br.innate_weights[lay]
+                            if iw_src.base is not self._W_innate_cap[lay]:
+                                self._W_innate_cap[lay][new_idx] = iw_src
+                                self._B_innate_cap[lay][new_idx] = br.innate_biases[lay]
                     self._TB_cap[lay][new_idx] = _F32_ZERO
                     self._A_hist_cap[lay][new_idx] = _F32_ZERO
                     self._D_hist_cap[lay][new_idx] = _F32_ZERO
                     br.weights[lay] = self._W_cap[lay][new_idx]
                     br.biases[lay] = self._B_cap[lay][new_idx]
+                    if has_innate and br.innate_weights:
+                        br.innate_weights[lay] = self._W_innate_cap[lay][new_idx]
+                        br.innate_biases[lay] = self._B_innate_cap[lay][new_idx]
                 self._trace_weights_cap[new_idx] = _F32_ZERO
                 self._accum_coef_cap[new_idx] = _F32_ZERO
                 self._last_out_cap[new_idx] = _F32_ZERO
@@ -1082,20 +1244,20 @@ class BatchedBrainPool:
                     br.hidden_state = self._H_cap[new_idx]
         self._ring_ptr = 0
 
-    def _ensure_pool_capacity(self, dims: List[int], n: int, old_n: int) -> bool:
-        if dims != self._layer_dims:
+    def _ensure_pool_capacity(self, dims: List[int], n: int, old_n: int, baldwin_plasticity: bool = False) -> bool:
+        if dims != self._layer_dims or (baldwin_plasticity != bool(self._W_innate_cap)):
             if self._has_pending_w_updates and self._bound_ids:
                 self.flush_weights()
             is_large = max(dims) > 512
             new_cap = max(64, ((n + 127) // 128) * 128) if is_large else max(64, int(n * 1.5))
-            self._allocate_capacity(dims, new_cap, preserve_n=0)
+            self._allocate_capacity(dims, new_cap, preserve_n=0, baldwin_plasticity=baldwin_plasticity)
             self._slot_map.clear()
             self._ring_ptr = 0
             return True
         if n > self._capacity:
             is_large = max(dims) > 512
             new_cap = max(64, ((n + 127) // 128) * 128) if is_large else max(64, int(self._capacity * 1.5), int(n * 1.25))
-            self._allocate_capacity(dims, new_cap, preserve_n=old_n)
+            self._allocate_capacity(dims, new_cap, preserve_n=old_n, baldwin_plasticity=baldwin_plasticity)
             return True
         return False
 
@@ -1106,8 +1268,9 @@ class BatchedBrainPool:
             return
 
         dims = brains[0].layer_dims
+        baldwin_plasticity = bool(brains[0].config.baldwin_plasticity)
         old_n = len(self._bound_ids)
-        if n == old_n and dims == self._layer_dims:
+        if n == old_n and dims == self._layer_dims and (baldwin_plasticity == bool(self._W_innate_cap)):
             if getattr(self, "_last_bound_brains", None) is brains:
                 return
             if self._bound_ids and id(brains[0]) == self._bound_ids[0] and id(brains[-1]) == self._bound_ids[-1]:
@@ -1118,7 +1281,7 @@ class BatchedBrainPool:
         self._last_bound_brains = brains
         curr_ids = [id(br) for br in brains]
         num_layers = len(dims) - 1
-        cap_reallocated = self._ensure_pool_capacity(dims, n, old_n)
+        cap_reallocated = self._ensure_pool_capacity(dims, n, old_n, baldwin_plasticity=baldwin_plasticity)
 
         slot_map = self._slot_map
         is_monotonic = bool(slot_map) and all(

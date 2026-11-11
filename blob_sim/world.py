@@ -159,6 +159,10 @@ class SimulationWorld:
         self._kin_vision_radii = np.empty(0, dtype=np.float32)
         self._kin_ids = np.empty(0, dtype=np.float32)
         self._kin_gene_rgbs = np.empty(0, dtype=np.uint32)
+        self._kin_drive_energy = np.empty(0, dtype=np.float32)
+        self._kin_drive_pain = np.empty(0, dtype=np.float32)
+        self._kin_drive_social = np.empty(0, dtype=np.float32)
+        self._kin_plasticity_lr = np.empty(0, dtype=np.float32)
         self._group_rgb_table = np.zeros(256, dtype=np.uint32)
         self.food_version: int = 1
         self.recent_eaten_indices: List[int] = []
@@ -439,6 +443,10 @@ class SimulationWorld:
             self._kin_vision_radii[i] = b.vision_radius
             self._kin_ids[i] = float(b.id)
             self._kin_gene_rgbs[i] = np.uint32(b.genes._rgb_int)
+            self._kin_drive_energy[i] = float(b.genes.drive_energy)
+            self._kin_drive_pain[i] = float(b.genes.drive_pain)
+            self._kin_drive_social[i] = float(b.genes.drive_social)
+            self._kin_plasticity_lr[i] = float(b.genes.plasticity_lr)
             if getattr(b, "_kin_ref", None) is None:
                 self._kin_xs[i] = b._x
                 self._kin_ys[i] = b._y
@@ -588,13 +596,26 @@ class SimulationWorld:
             home = home_list[i % len(home_list)]
             if home.is_full:
                 home = self._find_or_create_settlement_home(None, home.x, home.y)
-            genes = Genes(
-                speed=round(float(self.rng.uniform(0.85, 1.25)), 3),
-                sense=round(float(self.rng.uniform(0.85, 1.30)), 3),
-                size=round(float(self.rng.uniform(0.85, 1.15)), 3),
-                metabolism=1.0,
-                hue=round(float(self.rng.uniform(0, 360)), 1),
-            )
+            if self.world_cfg.intrinsic_homeostasis:
+                genes = Genes(
+                    speed=round(float(self.rng.uniform(0.85, 1.25)), 3),
+                    sense=round(float(self.rng.uniform(0.85, 1.30)), 3),
+                    size=round(float(self.rng.uniform(0.85, 1.15)), 3),
+                    metabolism=1.0,
+                    hue=round(float(self.rng.uniform(0, 360)), 1),
+                    drive_energy=round(float(self.rng.uniform(0.75, 1.25)), 3),
+                    drive_pain=round(float(self.rng.uniform(0.75, 1.25)), 3),
+                    drive_social=round(float(self.rng.uniform(-0.2, 0.8)), 3),
+                    plasticity_lr=round(float(self.rng.uniform(0.75, 1.25)), 3),
+                )
+            else:
+                genes = Genes(
+                    speed=round(float(self.rng.uniform(0.85, 1.25)), 3),
+                    sense=round(float(self.rng.uniform(0.85, 1.30)), 3),
+                    size=round(float(self.rng.uniform(0.85, 1.15)), 3),
+                    metabolism=1.0,
+                    hue=round(float(self.rng.uniform(0, 360)), 1),
+                )
             if use_pool_prealloc:
                 w_slices = [self._brain_pool._W_cap[lay][i] for lay in range(num_layers)]
                 b_slices = [self._brain_pool._B_cap[lay][i] for lay in range(num_layers)]
@@ -2442,6 +2463,10 @@ class SimulationWorld:
             self._kin_vision_radii = resize_arr("_kin_vision_radii", np.float32)
             self._kin_ids = resize_arr("_kin_ids", np.float32)
             self._kin_gene_rgbs = resize_arr("_kin_gene_rgbs", np.uint32)
+            self._kin_drive_energy = resize_arr("_kin_drive_energy", np.float32)
+            self._kin_drive_pain = resize_arr("_kin_drive_pain", np.float32)
+            self._kin_drive_social = resize_arr("_kin_drive_social", np.float32)
+            self._kin_plasticity_lr = resize_arr("_kin_plasticity_lr", np.float32)
             self._step_eff_visions = resize_arr("_step_eff_visions", np.float32)
             self._step_blob_foods_ok = resize_arr("_step_blob_foods_ok", np.float32)
             self._step_blob_moneys_ok = resize_arr("_step_blob_moneys_ok", np.float32)
@@ -3224,6 +3249,10 @@ class SimulationWorld:
                         self._kin_vision_radii[write_idx] = self._kin_vision_radii[n]
                         self._kin_ids[write_idx] = self._kin_ids[n]
                         self._kin_gene_rgbs[write_idx] = self._kin_gene_rgbs[n]
+                        self._kin_drive_energy[write_idx] = self._kin_drive_energy[n]
+                        self._kin_drive_pain[write_idx] = self._kin_drive_pain[n]
+                        self._kin_drive_social[write_idx] = self._kin_drive_social[n]
+                        self._kin_plasticity_lr[write_idx] = self._kin_plasticity_lr[n]
                     write_idx += 1
         for dead_b in dead_blobs:
             self._unregister_blob(dead_b)
@@ -3345,10 +3374,10 @@ class SimulationWorld:
             cohort_idx=cohort_idx,
         )
         self.telemetry.record_step_actions(living_blobs, actions_batch, dt)
-        # Record pre-kinematics positions, headings, and home relative vectors for exact canonical PBRS
         pre_xs = self._kin_xs[:n_living].copy()
         pre_ys = self._kin_ys[:n_living].copy()
         pre_headings = self._kin_headings[:n_living].copy()
+        prev_energies = self._kin_energies[:n_living].copy() if self.world_cfg.intrinsic_homeostasis else None
         rel_home_wx = self._kin_home_xs[:n_living] - pre_xs
         rel_home_wy = self._kin_home_ys[:n_living] - pre_ys
 
@@ -3356,53 +3385,54 @@ class SimulationWorld:
             living_blobs, actions_batch, home_objs, home_radii, night_mode, dt_scale
         )
 
-        # Physical displacement achieved during step
         disp_xs = self._kin_xs[:n_living] - pre_xs
         disp_ys = self._kin_ys[:n_living] - pre_ys
 
-        eff_oasis_vecs = obs_batch[:, 16:19] if self.world_cfg.egocentric_frame else oasis_vecs
-        base_rewards = self._compute_movement_shaping_reward_batch(
-            self._kin_in_swamps[:n_living],
-            self._kin_is_at_homes[:n_living],
-            self._kin_foods_today[:n_living],
-            actions_batch,
-            dx_foods,
-            dy_foods,
-            food_vecs[:, 2],
-            eff_oasis_vecs,
-            dx_homes,
-            dy_homes,
-            tod,
-            repro_target,
-            vxs=self._kin_vxs[:n_living],
-            vys=self._kin_vys[:n_living],
-            max_speeds=self._kin_max_speeds[:n_living],
-            disp_xs=disp_xs,
-            disp_ys=disp_ys,
-            d_norms=self._step_eff_visions[:n_living],
-            pre_headings=pre_headings,
-            rel_home_wx=rel_home_wx,
-            rel_home_wy=rel_home_wy,
-            headings=self._kin_headings[:n_living] if self.world_cfg.egocentric_frame else None,
-        )
-        scaled_reward_vec = base_rewards * dt_scale
-        step_rewards = (scaled_reward_vec * 2.5).astype(np.float32)
+        if not self.world_cfg.intrinsic_homeostasis:
+            eff_oasis_vecs = obs_batch[:, 16:19] if self.world_cfg.egocentric_frame else oasis_vecs
+            base_rewards = self._compute_movement_shaping_reward_batch(
+                self._kin_in_swamps[:n_living],
+                self._kin_is_at_homes[:n_living],
+                self._kin_foods_today[:n_living],
+                actions_batch,
+                dx_foods,
+                dy_foods,
+                food_vecs[:, 2],
+                eff_oasis_vecs,
+                dx_homes,
+                dy_homes,
+                tod,
+                repro_target,
+                vxs=self._kin_vxs[:n_living],
+                vys=self._kin_vys[:n_living],
+                max_speeds=self._kin_max_speeds[:n_living],
+                disp_xs=disp_xs,
+                disp_ys=disp_ys,
+                d_norms=self._step_eff_visions[:n_living],
+                pre_headings=pre_headings,
+                rel_home_wx=rel_home_wx,
+                rel_home_wy=rel_home_wy,
+                headings=self._kin_headings[:n_living] if self.world_cfg.egocentric_frame else None,
+            )
+            scaled_reward_vec = base_rewards * dt_scale
+            step_rewards = (scaled_reward_vec * 2.5).astype(np.float32)
+            srs = scaled_reward_vec.tolist()
+        else:
+            scaled_reward_vec = None
+            step_rewards = None
+            srs = None
 
-        # -------------------------------------------------------------
-        # 1. Fast Attribute Sync & Vectorized Colonize Filter
-        # -------------------------------------------------------------
         sprints_arr = (actions_batch[:, 2] + 1.0) * 0.5
         self._kin_sprints[:n_living] = sprints_arr
 
-        # Fast reward & kinematic distance accumulation in one single loop pass
-        srs = scaled_reward_vec.tolist()
         sps = sprints_arr.tolist()
         step_dists = np.hypot(disp_xs, disp_ys).tolist()
         for idx in range(n_living):
             b = living_blobs[idx]
-            sr = srs[idx]
-            b.last_reward = sr
-            b.cumulative_reward += sr
+            if srs is not None:
+                sr = srs[idx]
+                b.last_reward = sr
+                b.cumulative_reward += sr
             b.sprint_level = sps[idx]
             b.distance_traveled += step_dists[idx]
 
@@ -3470,10 +3500,11 @@ class SimulationWorld:
                 blob.social_desire = float(actions_batch[i, 4])
                 p.social_desire = float(actions_batch[j, 4])
                 if self._handle_social_encounter(blob, p):
-                    bonus = self.prefs.pref_social * 0.45
-                    blob.last_reward += bonus
-                    blob.cumulative_reward += bonus
-                    step_rewards[i] += bonus * 2.5
+                    if not self.world_cfg.intrinsic_homeostasis:
+                        bonus = self.prefs.pref_social * 0.45
+                        blob.last_reward += bonus
+                        blob.cumulative_reward += bonus
+                        step_rewards[i] += bonus * 2.5
 
             traded = False
             if (kind & 2):
@@ -3546,11 +3577,33 @@ class SimulationWorld:
 
         self._process_foraging(living_blobs, dt_scale, use_kin_cache=True)
 
-        for idx in range(n_living):
-            if living_blobs[idx].pending_rl_reward != 0.0:
-                # Scale discrete event reward uniformly by 2.5x to match movement shaping reward learning scale
-                step_rewards[idx] += living_blobs[idx].pending_rl_reward * 2.5
+        if self.world_cfg.intrinsic_homeostasis:
+            delta_e = (self._kin_energies[:n_living] - prev_energies) * np.float32(1.0 / 25.0)
+            acute_pain = np.maximum(np.float32(0.0), (-delta_e - np.float32(0.15)) * np.float32(1.5))
+            pain = (
+                np.float32(0.08) * hit_rocks.astype(np.float32)
+                + np.float32(0.04) * self._kin_in_swamps[:n_living].astype(np.float32)
+                + acute_pain
+            )
+            peer_prox = peer_vecs[:, 2]
+            base_intrinsic = (
+                self._kin_drive_energy[:n_living] * delta_e
+                - self._kin_drive_pain[:n_living] * pain
+                + np.float32(0.015) * self._kin_drive_social[:n_living] * peer_prox
+            )
+            bi_list = base_intrinsic.tolist()
+            for idx in range(n_living):
+                bi_val = bi_list[idx]
+                living_blobs[idx].last_reward = bi_val
+                living_blobs[idx].cumulative_reward += bi_val
                 living_blobs[idx].pending_rl_reward = 0.0
+            step_rewards = (base_intrinsic * self._kin_plasticity_lr[:n_living] * np.float32(2.5)).astype(np.float32)
+        else:
+            for idx in range(n_living):
+                if living_blobs[idx].pending_rl_reward != 0.0:
+                    # Scale discrete event reward uniformly by 2.5x to match movement shaping reward learning scale
+                    step_rewards[idx] += living_blobs[idx].pending_rl_reward * 2.5
+                    living_blobs[idx].pending_rl_reward = 0.0
 
         if self.world_cfg.every_tick_brain or do_trace or np.any(np.abs(step_rewards) > 0.25):
             self._brain_pool.apply_online_learning_batch(
@@ -4920,18 +4973,21 @@ class SimulationWorld:
             self._settle_blob_surplus_food(blob, home, repro_need)
             self._settle_blob_survival_deficit(blob, home, survival_need, grp_depot_cache=grp_depot_cache)
 
-            rew = home_rew_pos if blob.is_at_home else home_rew_neg
-            if blob.energy <= 0.0:
-                rew += starve_pen
-            elif blob.food_today >= repro_need - 1e-5:
-                rew += repro_rew
-            eod_rewards[idx] = rew
-            blob.cumulative_reward += rew
+            if not self.world_cfg.intrinsic_homeostasis:
+                rew = home_rew_pos if blob.is_at_home else home_rew_neg
+                if blob.energy <= 0.0:
+                    rew += starve_pen
+                elif blob.food_today >= repro_need - 1e-5:
+                    rew += repro_rew
+                eod_rewards[idx] = rew
+                blob.cumulative_reward += rew
+            else:
+                eod_rewards[idx] = 0.0
 
         for grp in self.groups.values():
             grp.rep_dirty = True
 
-        if n_living > 0:
+        if n_living > 0 and not self.world_cfg.intrinsic_homeostasis:
             self._brain_pool.apply_online_learning_batch(
                 [b.brain for b in living_blobs], eod_rewards, self.prefs.learning_rate
             )
@@ -5328,6 +5384,10 @@ class SimulationWorld:
                     size=g_dict.get("size", 1.0),
                     metabolism=g_dict.get("metabolism", 1.0),
                     hue=g_dict.get("hue", 195.0),
+                    drive_energy=g_dict.get("drive_energy", 1.0),
+                    drive_pain=g_dict.get("drive_pain", 1.0),
+                    drive_social=g_dict.get("drive_social", 0.3),
+                    plasticity_lr=g_dict.get("plasticity_lr", 1.0),
                 )
                 genes = base_genes.mutate(self.rng, self.prefs.mutation_rate, self.prefs.mutation_strength)
                 gen = champ.get("generation", 1) + 1
@@ -6136,6 +6196,10 @@ class SimulationWorld:
                     size=g_dict.get("size", 1.0),
                     metabolism=g_dict.get("metabolism", 1.0),
                     hue=g_dict.get("hue", 195.0),
+                    drive_energy=g_dict.get("drive_energy", 1.0),
+                    drive_pain=g_dict.get("drive_pain", 1.0),
+                    drive_social=g_dict.get("drive_social", 0.3),
+                    plasticity_lr=g_dict.get("plasticity_lr", 1.0),
                 )
                 brain = BlobBrain.from_dict(bdata["brain"], rng=self.rng).adapt_to_config(self.net_cfg)
                 blob = Blob(
@@ -6233,6 +6297,10 @@ class SimulationWorld:
         self._kin_age_ticks = np.empty(0, dtype=np.int32)
         self._kin_ticks_since_meal = np.empty(0, dtype=np.int32)
         self._kin_vision_radii = np.empty(0, dtype=np.float32)
+        self._kin_drive_energy = np.empty(0, dtype=np.float32)
+        self._kin_drive_pain = np.empty(0, dtype=np.float32)
+        self._kin_drive_social = np.empty(0, dtype=np.float32)
+        self._kin_plasticity_lr = np.empty(0, dtype=np.float32)
 
         # Deallocate obstacle CSR arrays
         self._rock_offsets = np.empty(0, dtype=np.int32)

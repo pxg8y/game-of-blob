@@ -182,6 +182,10 @@ class Genes:
     metabolism: float = 1.0  # Efficiency modifier
     hue: float = 195.0       # Individual visual hue when ungrouped
     sigma_mut: float = 0.05  # Self-adaptive mutation standard deviation (0.01 .. 0.20)
+    drive_energy: float = 1.0  # Homeostasis drive weight for energy (0.2 .. 3.0)
+    drive_pain: float = 1.0    # Homeostasis drive weight for pain (0.2 .. 3.0)
+    drive_social: float = 0.3  # Homeostasis drive weight for social affinity (-1.0 .. 2.0)
+    plasticity_lr: float = 1.0 # Somatic plasticity learning rate multiplier (0.1 .. 3.0)
     _basal_cost: float = field(init=False, repr=False, default=0.06)
     _rgb_int: int = field(init=False, repr=False, default=0x38BDF8)
 
@@ -210,6 +214,10 @@ class Genes:
         sense = self.sense if partner is None or rng.random() < 0.5 else partner.sense
         size = self.size if partner is None or rng.random() < 0.5 else partner.size
         hue = self.hue if partner is None or rng.random() < 0.5 else partner.hue
+        drive_energy = self.drive_energy if partner is None or rng.random() < 0.5 else partner.drive_energy
+        drive_pain = self.drive_pain if partner is None or rng.random() < 0.5 else partner.drive_pain
+        drive_social = self.drive_social if partner is None or rng.random() < 0.5 else partner.drive_social
+        plasticity_lr = self.plasticity_lr if partner is None or rng.random() < 0.5 else partner.plasticity_lr
         parent_sigma = self.sigma_mut if partner is None else (0.65 * self.sigma_mut + 0.35 * partner.sigma_mut)
 
         # Self-adaptive mutation schedule: log-normal update sigma_child = clip(sigma * exp(tau * N(0, 1)), 0.01, 0.20)
@@ -225,6 +233,14 @@ class Genes:
             size = float(np.clip(size + rng.normal(0.0, effective_str * 0.6), 0.65, 1.60))
         if rng.random() < mutation_rate:
             hue = float((hue + rng.normal(0.0, 14.0)) % 360.0)
+        if rng.random() < mutation_rate:
+            drive_energy = float(np.clip(drive_energy + rng.normal(0.0, effective_str * 0.8), 0.2, 3.0))
+        if rng.random() < mutation_rate:
+            drive_pain = float(np.clip(drive_pain + rng.normal(0.0, effective_str * 0.8), 0.2, 3.0))
+        if rng.random() < mutation_rate:
+            drive_social = float(np.clip(drive_social + rng.normal(0.0, effective_str * 0.8), -1.0, 2.0))
+        if rng.random() < mutation_rate:
+            plasticity_lr = float(np.clip(plasticity_lr + rng.normal(0.0, effective_str * 0.8), 0.1, 3.0))
 
         return Genes(
             speed=round(speed, 3),
@@ -233,6 +249,10 @@ class Genes:
             metabolism=round(float(0.5 * (speed + size)), 3),
             hue=round(hue, 1),
             sigma_mut=round(sigma_child, 4),
+            drive_energy=round(drive_energy, 3),
+            drive_pain=round(drive_pain, 3),
+            drive_social=round(drive_social, 3),
+            plasticity_lr=round(plasticity_lr, 3),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -243,6 +263,10 @@ class Genes:
             "metabolism": self.metabolism,
             "hue": self.hue,
             "sigma_mut": round(self.sigma_mut, 4),
+            "drive_energy": round(self.drive_energy, 3),
+            "drive_pain": round(self.drive_pain, 3),
+            "drive_social": round(self.drive_social, 3),
+            "plasticity_lr": round(self.plasticity_lr, 3),
         }
 
 
